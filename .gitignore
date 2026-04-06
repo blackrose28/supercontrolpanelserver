@@ -4,3 +4,5 @@ dist-test/
 data/
 *.tsbuildinfo
 npm-debug.log*
+.env
+.gitnexus

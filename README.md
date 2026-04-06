@@ -75,12 +75,33 @@ The server now fails fast if either is missing.
 npm install
 ```
 
+## Configure
+
+Copy the example env file and fill in real values:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` — the two required variables are:
+
+```dotenv
+CC_ADMIN_PASSWORD=your-strong-password
+CC_BOOTSTRAP_TOKEN=your-strong-token
+```
+
+> `.env` is gitignored and will never be committed.
+
 ## Start
 
 ```bash
-CC_ADMIN_PASSWORD='change-this-admin-password' \
-CC_BOOTSTRAP_TOKEN='change-this-bootstrap-token' \
 npm start
+```
+
+Or pass secrets inline (useful for CI / containers):
+
+```bash
+CC_ADMIN_PASSWORD='…' CC_BOOTSTRAP_TOKEN='…' npm start
 ```
 
 ## Development
