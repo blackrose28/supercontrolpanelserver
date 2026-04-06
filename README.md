@@ -1,0 +1,143 @@
+# cc-server
+
+Control Plane server for SuperControlPanel.
+
+## Features
+
+- Device enrollment
+- Agent websocket connection
+- Telemetry ingest and live streaming
+- Admin web UI
+- Persisted devices, telemetry, runtime summaries, and admin sessions
+- Cookie-based admin login with CSRF protection
+- Rate limiting on sensitive endpoints
+
+## Required environment variables
+
+These are required at startup:
+
+- `CC_ADMIN_PASSWORD`
+- `CC_BOOTSTRAP_TOKEN`
+
+The server now fails fast if either is missing.
+
+### Recommended values
+
+- `CC_ADMIN_PASSWORD`: at least 8+ characters
+- `CC_BOOTSTRAP_TOKEN`: at least 16+ characters
+
+## Optional environment variables
+
+### Server
+
+- `PORT`  
+  Default: `3000`
+
+- `CC_DB_PATH`  
+  Default: `./data/cc-server.sqlite`
+
+### Admin sessions
+
+- `CC_ADMIN_SESSION_TTL_HOURS`  
+  Default: `12`
+
+### Telemetry retention
+
+- `CC_LOG_RETENTION_MAX_EVENTS_PER_DEVICE`  
+  Default: `5000`
+
+- `CC_LOG_RETENTION_MAX_AGE_DAYS`  
+  Default: `30`
+
+### Rate limiting
+
+- `CC_RATE_LIMIT_LOGIN_MAX`  
+  Default: `10`
+
+- `CC_RATE_LIMIT_LOGIN_WINDOW_MS`  
+  Default: `300000`
+
+- `CC_RATE_LIMIT_ENROLL_MAX`  
+  Default: `20`
+
+- `CC_RATE_LIMIT_ENROLL_WINDOW_MS`  
+  Default: `300000`
+
+- `CC_RATE_LIMIT_INGEST_MAX`  
+  Default: `600`
+
+- `CC_RATE_LIMIT_INGEST_WINDOW_MS`  
+  Default: `60000`
+
+## Install
+
+```bash
+npm install
+```
+
+## Start
+
+```bash
+CC_ADMIN_PASSWORD='change-this-admin-password' \
+CC_BOOTSTRAP_TOKEN='change-this-bootstrap-token' \
+npm start
+```
+
+## Development
+
+```bash
+npm run dev
+```
+
+## Admin UI
+
+Open:
+
+```text
+http://localhost:3000/admin
+```
+
+Then sign in with `CC_ADMIN_PASSWORD`.
+
+## Enrollment flow
+
+1. Start `cc-server`
+2. Enroll a device via `POST /v1/enroll` using `CC_BOOTSTRAP_TOKEN`
+3. Save returned:
+   - `deviceId`
+   - `ccAgentToken`
+4. Configure the agent with those values
+
+## Security notes
+
+- Admin browser auth uses an HTTP-only session cookie
+- Login/logout are CSRF protected
+- Admin secret is no longer passed in query params
+- Stored agent tokens and admin session tokens are hashed at rest
+- Sensitive endpoints are rate-limited
+
+## Main endpoints
+
+### Admin
+
+- `GET /admin`
+- `GET /admin/login`
+- `POST /admin/login`
+- `POST /admin/logout`
+- `GET /admin/devices`
+
+### Device and telemetry APIs
+
+- `POST /v1/enroll`
+- `GET /v1/devices`
+- `GET /v1/devices/:id`
+- `POST /v1/logs`
+- `GET /v1/logs`
+- `GET /v1/logs/export`
+- `GET /v1/device-summary`
+- `GET /v1/log-settings`
+- `GET /v1/logs/stream`
+
+### Health
+
+- `GET /v1/health`
