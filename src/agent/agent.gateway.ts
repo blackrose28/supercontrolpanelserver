@@ -7,6 +7,7 @@ import {
 import { Server } from 'ws';
 import { DeviceStore } from '../devices/device.store';
 import { v4 as uuidv4 } from 'uuid';
+import { LogStore } from '../logs/log.store';
 
 @WebSocketGateway({ path: '/agent' })
 export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -15,7 +16,10 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private seqCounter = 0;
 
-  constructor(private deviceStore: DeviceStore) {}
+  constructor(
+    private deviceStore: DeviceStore,
+    private readonly logStore: LogStore,
+  ) {}
 
   handleConnection(client: any, request: any) {
     console.log('Agent connection attempt');
@@ -122,6 +126,9 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
         case 'status_snapshot':
           this.handleStatusSnapshot(envelope, client);
           break;
+        case 'inventory':
+          this.handleInventory(envelope, client);
+          break;
         case 'function-status':
           this.handleFunctionStatus(envelope, client);
           break;
@@ -147,10 +154,39 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private handleStatusSnapshot(envelope: any, client: any) {
     console.log(`Status snapshot from ${client.deviceId}:`, envelope.payload);
-    
-    // Store snapshot (in-memory for Phase 1)
-    // TODO: persist in Phase 2
-    
+
+    this.logStore.append({
+      id: uuidv4(),
+      deviceId: client.deviceId,
+      type: 'status_snapshot',
+      sessionId: client.sessionId ?? null,
+      functionId: null,
+      seq: typeof envelope.seq === 'number' ? envelope.seq : Date.now(),
+      ts: envelope.ts || new Date().toISOString(),
+      payload: envelope.payload ?? null,
+    });
+
+    this.sendMessage(client, {
+      type: 'ack',
+      reqSeq: envelope.seq,
+      payload: { status: 'ok' },
+    });
+  }
+
+  private handleInventory(envelope: any, client: any) {
+    console.log(`Inventory from ${client.deviceId}:`, envelope.payload);
+
+    this.logStore.append({
+      id: uuidv4(),
+      deviceId: client.deviceId,
+      type: 'inventory',
+      sessionId: client.sessionId ?? null,
+      functionId: null,
+      seq: typeof envelope.seq === 'number' ? envelope.seq : Date.now(),
+      ts: envelope.ts || new Date().toISOString(),
+      payload: envelope.payload ?? null,
+    });
+
     this.sendMessage(client, {
       type: 'ack',
       reqSeq: envelope.seq,
@@ -160,9 +196,26 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private handleFunctionStatus(envelope: any, client: any) {
     console.log(`Function status from ${client.deviceId}:`, envelope.payload);
-    
-    // TODO: persist and forward to SSE in Phase 2
-    
+
+    const payload =
+      envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
+    const functionId =
+      typeof payload.functionId === 'string' ? payload.functionId : null;
+
+    this.logStore.append({
+      id: uuidv4(),
+      deviceId: client.deviceId,
+      type: 'function-status',
+      sessionId:
+        typeof payload.sessionId === 'string'
+          ? payload.sessionId
+          : client.sessionId ?? null,
+      functionId,
+      seq: typeof envelope.seq === 'number' ? envelope.seq : Date.now(),
+      ts: envelope.ts || new Date().toISOString(),
+      payload: envelope.payload ?? null,
+    });
+
     this.sendMessage(client, {
       type: 'ack',
       reqSeq: envelope.seq,

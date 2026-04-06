@@ -7,6 +7,7 @@ export type TelemetryEventType =
   | 'pty-exit'
   | 'openvpn-log'
   | 'function-status'
+  | 'status_snapshot'
   | 'inventory';
 
 export interface TelemetryEvent {
