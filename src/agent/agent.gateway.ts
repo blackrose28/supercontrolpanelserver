@@ -91,6 +91,25 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     };
   }
 
+  requestInventory(deviceId: string) {
+    const session = this.deviceStore.getSessionByDeviceId(deviceId);
+    if (!session?.ws) {
+      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
+    }
+
+    const envelope = this.sendMessage(session.ws, {
+      type: 'request_inventory',
+      payload: null,
+    });
+
+    return {
+      ok: true,
+      deviceId,
+      reqSeq: envelope.seq,
+      requestedAt: envelope.ts,
+    };
+  }
+
   private handleRawMessage(data: string, client: any) {
     try {
       const envelope = JSON.parse(data);

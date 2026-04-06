@@ -99,4 +99,26 @@ export class DevicesController {
     }
     return result;
   }
+
+  @Post('devices/:id/request-inventory')
+  requestInventory(
+    @Param('id') id: string,
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    requireAdminAuthorized(auth, cookie, this.adminSessions);
+    requireCsrf(cookie, csrfToken);
+
+    const device = this.deviceStore.getDevice(id);
+    if (!device) {
+      throw new HttpException('Device not found', HttpStatus.NOT_FOUND);
+    }
+
+    const result = this.agentGateway.requestInventory(id);
+    if (!result.ok) {
+      throw new HttpException(result.reason, HttpStatus.CONFLICT);
+    }
+    return result;
+  }
 }

@@ -201,6 +201,7 @@ export class AdminController {
           <div id="summary-meta" class="summary-meta">Select a device to load the latest persisted runtime summary.</div>
           <div class="summary-actions">
             <button id="request-status-snapshot" type="button">Request fresh status snapshot</button>
+            <button id="request-inventory" type="button">Request inventory</button>
           </div>
           <div id="summary-content" class="summary-grid"></div>
         </section>
@@ -471,6 +472,20 @@ export class AdminController {
             return response.json();
           }
 
+          async function requestInventory(deviceId) {
+            const response = await fetch('/v1/devices/' + encodeURIComponent(deviceId) + '/request-inventory', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ csrfToken }),
+            });
+            if (!response.ok) {
+              throw new Error(await response.text());
+            }
+            return response.json();
+          }
+
           async function refreshDevices() {
             try {
               const response = await fetch('/v1/devices');
@@ -725,6 +740,20 @@ export class AdminController {
             } catch (error) {
               document.getElementById('summary-meta').textContent =
                 'Failed to request fresh status snapshot.';
+            }
+          });
+
+          document.getElementById('request-inventory').addEventListener('click', async () => {
+            if (!selectedDeviceId) {
+              return;
+            }
+            try {
+              await requestInventory(selectedDeviceId);
+              document.getElementById('summary-meta').textContent =
+                'Requested inventory refresh at ' + new Date().toISOString();
+            } catch (error) {
+              document.getElementById('summary-meta').textContent =
+                'Failed to request inventory refresh.';
             }
           });
 
