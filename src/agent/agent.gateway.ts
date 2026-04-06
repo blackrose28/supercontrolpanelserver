@@ -114,6 +114,44 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     };
   }
 
+  requestRecentLogs(deviceId: string) {
+    const session = this.deviceStore.getSessionByDeviceId(deviceId);
+    if (!session?.ws) {
+      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
+    }
+
+    const envelope = this.sendMessage(session.ws, {
+      type: 'request_recent_logs',
+      payload: null,
+    });
+
+    return {
+      ok: true,
+      deviceId,
+      reqSeq: envelope.seq,
+      requestedAt: envelope.ts,
+    };
+  }
+
+  requestRestartOpenvpn(deviceId: string) {
+    const session = this.deviceStore.getSessionByDeviceId(deviceId);
+    if (!session?.ws) {
+      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
+    }
+
+    const envelope = this.sendMessage(session.ws, {
+      type: 'request_restart_openvpn',
+      payload: null,
+    });
+
+    return {
+      ok: true,
+      deviceId,
+      reqSeq: envelope.seq,
+      requestedAt: envelope.ts,
+    };
+  }
+
   private handleRawMessage(data: string, client: any) {
     try {
       const envelope = JSON.parse(data);
@@ -128,6 +166,9 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
           break;
         case 'inventory':
           this.handleInventory(envelope, client);
+          break;
+        case 'recent_logs':
+          this.handleRecentLogs(envelope, client);
           break;
         case 'function-status':
           this.handleFunctionStatus(envelope, client);
@@ -180,6 +221,27 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
       id: uuidv4(),
       deviceId: client.deviceId,
       type: 'inventory',
+      sessionId: client.sessionId ?? null,
+      functionId: null,
+      seq: typeof envelope.seq === 'number' ? envelope.seq : Date.now(),
+      ts: envelope.ts || new Date().toISOString(),
+      payload: envelope.payload ?? null,
+    });
+
+    this.sendMessage(client, {
+      type: 'ack',
+      reqSeq: envelope.seq,
+      payload: { status: 'ok' },
+    });
+  }
+
+  private handleRecentLogs(envelope: any, client: any) {
+    console.log(`Recent logs from ${client.deviceId}:`, envelope.payload);
+
+    this.logStore.append({
+      id: uuidv4(),
+      deviceId: client.deviceId,
+      type: 'recent_logs',
       sessionId: client.sessionId ?? null,
       functionId: null,
       seq: typeof envelope.seq === 'number' ? envelope.seq : Date.now(),

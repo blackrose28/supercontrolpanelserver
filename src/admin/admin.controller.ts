@@ -202,6 +202,8 @@ export class AdminController {
           <div class="summary-actions">
             <button id="request-status-snapshot" type="button">Request fresh status snapshot</button>
             <button id="request-inventory" type="button">Request inventory</button>
+            <button id="request-recent-logs" type="button">Request recent logs</button>
+            <button id="request-restart-openvpn" type="button">Restart OpenVPN</button>
           </div>
           <div id="summary-content" class="summary-grid"></div>
         </section>
@@ -219,6 +221,7 @@ export class AdminController {
                 <option value="pty-exit">pty-exit</option>
                 <option value="openvpn-log">openvpn-log</option>
                 <option value="inventory">inventory</option>
+                <option value="recent_logs">recent_logs</option>
               </select>
               <input id="logs-function-filter" type="text" placeholder="Function ID" />
               <input id="logs-text-filter" type="text" placeholder="Search text" />
@@ -474,6 +477,34 @@ export class AdminController {
 
           async function requestInventory(deviceId) {
             const response = await fetch('/v1/devices/' + encodeURIComponent(deviceId) + '/request-inventory', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ csrfToken }),
+            });
+            if (!response.ok) {
+              throw new Error(await response.text());
+            }
+            return response.json();
+          }
+
+          async function requestRecentLogs(deviceId) {
+            const response = await fetch('/v1/devices/' + encodeURIComponent(deviceId) + '/request-recent-logs', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ csrfToken }),
+            });
+            if (!response.ok) {
+              throw new Error(await response.text());
+            }
+            return response.json();
+          }
+
+          async function requestRestartOpenvpn(deviceId) {
+            const response = await fetch('/v1/devices/' + encodeURIComponent(deviceId) + '/request-restart-openvpn', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -754,6 +785,34 @@ export class AdminController {
             } catch (error) {
               document.getElementById('summary-meta').textContent =
                 'Failed to request inventory refresh.';
+            }
+          });
+
+          document.getElementById('request-recent-logs').addEventListener('click', async () => {
+            if (!selectedDeviceId) {
+              return;
+            }
+            try {
+              await requestRecentLogs(selectedDeviceId);
+              document.getElementById('summary-meta').textContent =
+                'Requested recent logs at ' + new Date().toISOString();
+            } catch (error) {
+              document.getElementById('summary-meta').textContent =
+                'Failed to request recent logs.';
+            }
+          });
+
+          document.getElementById('request-restart-openvpn').addEventListener('click', async () => {
+            if (!selectedDeviceId) {
+              return;
+            }
+            try {
+              await requestRestartOpenvpn(selectedDeviceId);
+              document.getElementById('summary-meta').textContent =
+                'Requested OpenVPN restart at ' + new Date().toISOString();
+            } catch (error) {
+              document.getElementById('summary-meta').textContent =
+                'Failed to request OpenVPN restart.';
             }
           });
 

@@ -8,7 +8,8 @@ export type TelemetryEventType =
   | 'openvpn-log'
   | 'function-status'
   | 'status_snapshot'
-  | 'inventory';
+  | 'inventory'
+  | 'recent_logs';
 
 export interface TelemetryEvent {
   id: string;
