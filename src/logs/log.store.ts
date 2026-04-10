@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Observable, Subject, filter } from 'rxjs';
 import { DatabaseService } from '../database/database.service';
+import { redactTelemetryPayload } from './log-redaction';
 
 export type TelemetryEventType =
   | 'pty-output'
@@ -66,6 +67,11 @@ export class LogStore {
   }
 
   append(event: TelemetryEvent): TelemetryEvent {
+    const sanitizedEvent: TelemetryEvent = {
+      ...event,
+      payload: redactTelemetryPayload(event.payload),
+    };
+
     this.databaseService.connection
       .prepare(
         `
@@ -76,21 +82,22 @@ export class LogStore {
         `,
       )
       .run({
-        id: event.id,
-        deviceId: event.deviceId,
-        type: event.type,
-        sessionId: event.sessionId ?? null,
-        functionId: event.functionId ?? null,
-        seq: event.seq,
-        ts: event.ts,
-        payloadJson: event.payload == null ? null : JSON.stringify(event.payload),
+        id: sanitizedEvent.id,
+        deviceId: sanitizedEvent.deviceId,
+        type: sanitizedEvent.type,
+        sessionId: sanitizedEvent.sessionId ?? null,
+        functionId: sanitizedEvent.functionId ?? null,
+        seq: sanitizedEvent.seq,
+        ts: sanitizedEvent.ts,
+        payloadJson:
+          sanitizedEvent.payload == null ? null : JSON.stringify(sanitizedEvent.payload),
       });
 
-    this.trimDeviceHistory(event.deviceId);
+    this.trimDeviceHistory(sanitizedEvent.deviceId);
     this.pruneExpiredLogs();
-    this.updateRuntimeSummary(event);
-    this.stream.next(event);
-    return event;
+    this.updateRuntimeSummary(sanitizedEvent);
+    this.stream.next(sanitizedEvent);
+    return sanitizedEvent;
   }
 
   listByDevice(deviceId: string, limit = 200, filterBy: TelemetryFilter = {}): TelemetryEvent[] {

@@ -4,21 +4,30 @@ import { v4 as uuidv4 } from 'uuid';
 import { getBootstrapToken } from '../config/auth';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { getClientId } from '../rate-limit/client-id';
-import { AgentGateway } from '../agent/agent.gateway';
 import { AdminSessionService } from '../admin/admin-session.service';
-import { requireAdminAuthorized, requireCsrf } from '../admin/admin-auth';
+import {
+  requireAdminAuthorized,
+  requireAdminMutationAuthorized,
+} from '../admin/admin-auth';
+import { AdminApiTokenService } from '../admin/admin-api-token.service';
+import { CommandDispatchService } from '../commands/command-dispatch.service';
 
 @Controller('v1')
 export class DevicesController {
   constructor(
     private deviceStore: DeviceStore,
     private readonly rateLimitService: RateLimitService,
-    private readonly agentGateway: AgentGateway,
     private readonly adminSessions: AdminSessionService,
+    private readonly adminApiTokens: AdminApiTokenService,
+    private readonly commandDispatch: CommandDispatchService,
   ) {}
 
   @Get('devices')
-  getAllDevices() {
+  getAllDevices(
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    requireAdminAuthorized(auth, cookie, this.adminSessions, this.adminApiTokens, ['device:read']);
     return this.deviceStore.getAllDevices().map(d => ({
       id: d.id,
       name: d.name,
@@ -28,7 +37,12 @@ export class DevicesController {
   }
 
   @Get('devices/:id')
-  getDevice(@Param('id') id: string) {
+  getDevice(
+    @Param('id') id: string,
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    requireAdminAuthorized(auth, cookie, this.adminSessions, this.adminApiTokens, ['device:read']);
     const device = this.deviceStore.getDevice(id);
     if (!device) {
       throw new HttpException('Device not found', HttpStatus.NOT_FOUND);
@@ -81,88 +95,179 @@ export class DevicesController {
   @Post('devices/:id/request-status-snapshot')
   requestStatusSnapshot(
     @Param('id') id: string,
+    @Body('commandId') commandId: string | undefined,
     @Body('csrfToken') csrfToken: string | undefined,
     @Headers('authorization') auth?: string,
     @Headers('cookie') cookie?: string,
   ) {
-    requireAdminAuthorized(auth, cookie, this.adminSessions);
-    requireCsrf(cookie, csrfToken);
+    const principal = requireAdminMutationAuthorized(
+      auth,
+      cookie,
+      csrfToken,
+      this.adminSessions,
+      this.adminApiTokens,
+      ['device:control'],
+    );
 
-    const device = this.deviceStore.getDevice(id);
-    if (!device) {
-      throw new HttpException('Device not found', HttpStatus.NOT_FOUND);
-    }
-
-    const result = this.agentGateway.requestStatusSnapshot(id);
-    if (!result.ok) {
-      throw new HttpException(result.reason, HttpStatus.CONFLICT);
-    }
-    return result;
+    return this.commandDispatch.dispatchGenericCommand({
+      deviceId: id,
+      commandType: 'request_status_snapshot',
+      requestedCommandId: commandId,
+      principal,
+    });
   }
 
   @Post('devices/:id/request-inventory')
   requestInventory(
     @Param('id') id: string,
+    @Body('commandId') commandId: string | undefined,
     @Body('csrfToken') csrfToken: string | undefined,
     @Headers('authorization') auth?: string,
     @Headers('cookie') cookie?: string,
   ) {
-    requireAdminAuthorized(auth, cookie, this.adminSessions);
-    requireCsrf(cookie, csrfToken);
+    const principal = requireAdminMutationAuthorized(
+      auth,
+      cookie,
+      csrfToken,
+      this.adminSessions,
+      this.adminApiTokens,
+      ['device:control'],
+    );
 
-    const device = this.deviceStore.getDevice(id);
-    if (!device) {
-      throw new HttpException('Device not found', HttpStatus.NOT_FOUND);
-    }
-
-    const result = this.agentGateway.requestInventory(id);
-    if (!result.ok) {
-      throw new HttpException(result.reason, HttpStatus.CONFLICT);
-    }
-    return result;
+    return this.commandDispatch.dispatchGenericCommand({
+      deviceId: id,
+      commandType: 'request_inventory',
+      requestedCommandId: commandId,
+      principal,
+    });
   }
 
   @Post('devices/:id/request-recent-logs')
   requestRecentLogs(
     @Param('id') id: string,
+    @Body('commandId') commandId: string | undefined,
     @Body('csrfToken') csrfToken: string | undefined,
     @Headers('authorization') auth?: string,
     @Headers('cookie') cookie?: string,
   ) {
-    requireAdminAuthorized(auth, cookie, this.adminSessions);
-    requireCsrf(cookie, csrfToken);
+    const principal = requireAdminMutationAuthorized(
+      auth,
+      cookie,
+      csrfToken,
+      this.adminSessions,
+      this.adminApiTokens,
+      ['device:control'],
+    );
 
-    const device = this.deviceStore.getDevice(id);
-    if (!device) {
-      throw new HttpException('Device not found', HttpStatus.NOT_FOUND);
-    }
-
-    const result = this.agentGateway.requestRecentLogs(id);
-    if (!result.ok) {
-      throw new HttpException(result.reason, HttpStatus.CONFLICT);
-    }
-    return result;
+    return this.commandDispatch.dispatchGenericCommand({
+      deviceId: id,
+      commandType: 'request_recent_logs',
+      requestedCommandId: commandId,
+      principal,
+    });
   }
 
   @Post('devices/:id/request-restart-openvpn')
   requestRestartOpenvpn(
     @Param('id') id: string,
+    @Body('commandId') commandId: string | undefined,
     @Body('csrfToken') csrfToken: string | undefined,
     @Headers('authorization') auth?: string,
     @Headers('cookie') cookie?: string,
   ) {
-    requireAdminAuthorized(auth, cookie, this.adminSessions);
-    requireCsrf(cookie, csrfToken);
+    const principal = requireAdminMutationAuthorized(
+      auth,
+      cookie,
+      csrfToken,
+      this.adminSessions,
+      this.adminApiTokens,
+      ['device:control'],
+    );
 
-    const device = this.deviceStore.getDevice(id);
-    if (!device) {
-      throw new HttpException('Device not found', HttpStatus.NOT_FOUND);
-    }
+    return this.commandDispatch.dispatchGenericCommand({
+      deviceId: id,
+      commandType: 'restart_openvpn',
+      requestedCommandId: commandId,
+      principal,
+    });
+  }
 
-    const result = this.agentGateway.requestRestartOpenvpn(id);
-    if (!result.ok) {
-      throw new HttpException(result.reason, HttpStatus.CONFLICT);
-    }
-    return result;
+  @Post('devices/:id/request-restart-boundary-auth')
+  requestRestartBoundaryAuth(
+    @Param('id') id: string,
+    @Body('commandId') commandId: string | undefined,
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    const principal = requireAdminMutationAuthorized(
+      auth,
+      cookie,
+      csrfToken,
+      this.adminSessions,
+      this.adminApiTokens,
+      ['device:control'],
+    );
+
+    return this.commandDispatch.dispatchGenericCommand({
+      deviceId: id,
+      commandType: 'restart_boundary_auth',
+      requestedCommandId: commandId,
+      principal,
+    });
+  }
+
+  @Post('devices/:id/request-restart-server-tunnel')
+  requestRestartServerTunnel(
+    @Param('id') id: string,
+    @Body('serverId') serverId: string | undefined,
+    @Body('commandId') commandId: string | undefined,
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    const principal = requireAdminMutationAuthorized(
+      auth,
+      cookie,
+      csrfToken,
+      this.adminSessions,
+      this.adminApiTokens,
+      ['device:control'],
+    );
+
+    return this.commandDispatch.dispatchGenericCommand({
+      deviceId: id,
+      commandType: 'restart_server_tunnel',
+      requestedCommandId: commandId,
+      payload: { serverId: String(serverId || '').trim() },
+      principal,
+    });
+  }
+
+  @Post('devices/:id/request-restart-server-ssh')
+  requestRestartServerSsh(
+    @Param('id') id: string,
+    @Body('serverId') serverId: string | undefined,
+    @Body('commandId') commandId: string | undefined,
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    const principal = requireAdminMutationAuthorized(
+      auth,
+      cookie,
+      csrfToken,
+      this.adminSessions,
+      this.adminApiTokens,
+      ['device:control'],
+    );
+
+    return this.commandDispatch.dispatchGenericCommand({
+      deviceId: id,
+      commandType: 'restart_server_ssh',
+      requestedCommandId: commandId,
+      payload: { serverId: String(serverId || '').trim() },
+      principal,
+    });
   }
 }

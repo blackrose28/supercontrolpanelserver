@@ -9,10 +9,12 @@ import {
   MessageEvent,
   Post,
   Query,
+  Res,
   Sse,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Observable, concat, from, map } from 'rxjs';
+import { Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { DeviceStore } from '../devices/device.store';
 import { LogStore, TelemetryEvent, TelemetryFilter } from './log.store';
@@ -20,6 +22,7 @@ import { requireAdminAuthorized } from '../admin/admin-auth';
 import { AdminSessionService } from '../admin/admin-session.service';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { getClientId } from '../rate-limit/client-id';
+import { AdminApiTokenService } from '../admin/admin-api-token.service';
 
 type LogIngestBody = {
   events?: Array<Partial<TelemetryEvent>>;
@@ -31,6 +34,7 @@ export class LogsController {
     private readonly deviceStore: DeviceStore,
     private readonly logStore: LogStore,
     private readonly adminSessions: AdminSessionService,
+    private readonly adminApiTokens: AdminApiTokenService,
     private readonly rateLimitService: RateLimitService,
   ) {}
 
@@ -40,14 +44,30 @@ export class LogsController {
     @Headers('x-forwarded-for') forwardedFor?: string,
     @Headers('x-real-ip') realIp?: string,
     @Body() body?: LogIngestBody,
+    @Res({ passthrough: true }) res?: Response,
   ) {
     const device = this.authenticateAgent(auth);
     const clientId = getClientId(forwardedFor, realIp);
-    this.rateLimitService.check(
+    const ingestLimit = this.rateLimitService.checkDetailed(
       `ingest:${device.id}:${clientId}`,
       this.rateLimitService.ingestLimit(),
       this.rateLimitService.ingestWindowMs(),
     );
+    if (!ingestLimit.ok) {
+      const retryAfterMs = 'retryAfterMs' in ingestLimit ? ingestLimit.retryAfterMs : 1000;
+      res?.setHeader('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
+      throw new HttpException(
+        {
+          type: 'nack',
+          payload: {
+            code: 'rate_limited',
+            rate_limited: true,
+            retryAfterMs,
+          },
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
     const incoming = this.normalizeEvents(body);
 
     if (!incoming.length) {
@@ -84,7 +104,10 @@ export class LogsController {
     @Query('functionId') functionId?: string,
     @Query('q') q?: string,
   ) {
-    this.authenticateAdmin(auth, cookie);
+    requireAdminAuthorized(auth, cookie, this.adminSessions, this.adminApiTokens, [
+      'device:read',
+      'logs:read',
+    ]);
 
     if (!deviceId) {
       throw new HttpException('deviceId is required', HttpStatus.BAD_REQUEST);
@@ -113,7 +136,10 @@ export class LogsController {
     @Query('functionId') functionId?: string,
     @Query('q') q?: string,
   ) {
-    this.authenticateAdmin(auth, cookie);
+    requireAdminAuthorized(auth, cookie, this.adminSessions, this.adminApiTokens, [
+      'device:read',
+      'logs:export',
+    ]);
 
     if (!deviceId) {
       throw new HttpException('deviceId is required', HttpStatus.BAD_REQUEST);
@@ -143,7 +169,7 @@ export class LogsController {
     @Headers('cookie') cookie?: string,
     @Query('deviceId') deviceId?: string,
   ) {
-    this.authenticateAdmin(auth, cookie);
+    requireAdminAuthorized(auth, cookie, this.adminSessions, this.adminApiTokens, ['device:read']);
 
     if (!deviceId) {
       throw new HttpException('deviceId is required', HttpStatus.BAD_REQUEST);
@@ -161,7 +187,7 @@ export class LogsController {
     @Headers('authorization') auth?: string,
     @Headers('cookie') cookie?: string,
   ) {
-    this.authenticateAdmin(auth, cookie);
+    requireAdminAuthorized(auth, cookie, this.adminSessions, this.adminApiTokens, ['logs:read']);
     return this.logStore.getRetentionSettings();
   }
 
@@ -175,7 +201,10 @@ export class LogsController {
     @Query('functionId') functionId?: string,
     @Query('q') q?: string,
   ): Observable<MessageEvent> {
-    this.authenticateAdmin(auth, cookie);
+    requireAdminAuthorized(auth, cookie, this.adminSessions, this.adminApiTokens, [
+      'device:read',
+      'logs:read',
+    ]);
 
     if (!deviceId) {
       throw new HttpException('deviceId is required', HttpStatus.BAD_REQUEST);
@@ -206,11 +235,6 @@ export class LogsController {
     }
     return device;
   }
-
-  private authenticateAdmin(auth?: string, cookie?: string) {
-    requireAdminAuthorized(auth, cookie, this.adminSessions);
-  }
-
   private normalizeEvents(body?: LogIngestBody): Array<Partial<TelemetryEvent>> {
     if (!body) {
       return [];

@@ -9,6 +9,7 @@ Control Plane server for SuperControlPanel.
 - Telemetry ingest and live streaming
 - Admin web UI
 - Persisted devices, telemetry, runtime summaries, and admin sessions
+- Persisted admin API tokens with mint/list/revoke support
 - Cookie-based admin login with CSRF protection
 - Rate limiting on sensitive endpoints
 
@@ -40,6 +41,11 @@ The server now fails fast if either is missing.
 
 - `CC_ADMIN_SESSION_TTL_HOURS`  
   Default: `12`
+
+### Mobile/admin API auth
+
+- `CC_ADMIN_API_TOKEN`  
+  Optional. Bootstrap bearer token for early mobile/admin REST clients. DB-backed minted tokens are also supported.
 
 ### Telemetry retention
 
@@ -120,6 +126,23 @@ http://localhost:3000/admin
 
 Then sign in with `CC_ADMIN_PASSWORD`.
 
+From the Devices page, the "Admin API tokens" section can mint, list, and revoke bearer tokens for mobile/admin REST clients.
+
+The Devices page also exposes the current safe device-control actions:
+
+- request status snapshot
+- request inventory
+- request recent logs
+- restart OpenVPN
+- restart Boundary auth
+- restart server tunnel
+- restart server SSH
+
+For server-targeted restart actions, the Admin UI uses the selected device's latest inventory summary instead of asking the user to type a raw server ID:
+
+- restart server tunnel shows a picker of Boundary-backed servers only
+- restart server SSH shows a picker of all inventory servers
+
 ## Enrollment flow
 
 1. Start `cc-server`
@@ -132,9 +155,13 @@ Then sign in with `CC_ADMIN_PASSWORD`.
 ## Security notes
 
 - Admin browser auth uses an HTTP-only session cookie
+- Mobile/admin REST clients can use `Authorization: Bearer <token>`
+- Admin API tokens can be server-minted, stored hashed at rest, listed in the Admin UI, and revoked individually
+- `CC_ADMIN_API_TOKEN` remains available as an optional static bootstrap/back-compat token
 - Login/logout are CSRF protected
+- CSRF is required for browser-session mutations, but not for bearer-token admin API calls
 - Admin secret is no longer passed in query params
-- Stored agent tokens and admin session tokens are hashed at rest
+- Stored agent tokens, admin sessions, and DB-backed admin API tokens are hashed at rest
 - Sensitive endpoints are rate-limited
 
 ## Main endpoints
@@ -146,12 +173,22 @@ Then sign in with `CC_ADMIN_PASSWORD`.
 - `POST /admin/login`
 - `POST /admin/logout`
 - `GET /admin/devices`
+- `GET /admin/api-tokens`
+- `POST /admin/api-tokens`
+- `POST /admin/api-tokens/:tokenId/revoke`
 
 ### Device and telemetry APIs
 
 - `POST /v1/enroll`
 - `GET /v1/devices`
 - `GET /v1/devices/:id`
+- `POST /v1/devices/:id/request-status-snapshot`
+- `POST /v1/devices/:id/request-inventory`
+- `POST /v1/devices/:id/request-recent-logs`
+- `POST /v1/devices/:id/request-restart-openvpn`
+- `POST /v1/devices/:id/request-restart-boundary-auth`
+- `POST /v1/devices/:id/request-restart-server-tunnel`
+- `POST /v1/devices/:id/request-restart-server-ssh`
 - `POST /v1/logs`
 - `GET /v1/logs`
 - `GET /v1/logs/export`
@@ -162,3 +199,29 @@ Then sign in with `CC_ADMIN_PASSWORD`.
 ### Health
 
 - `GET /v1/health`
+
+## Auth modes by surface
+
+- Browser Admin UI:
+  - cookie session + CSRF
+- Mobile/admin REST API:
+  - `Authorization: Bearer <mintedToken>`
+  - `Authorization: Bearer <CC_ADMIN_API_TOKEN>` also works when the optional env token is configured
+- Agent transport / ingest:
+  - `Authorization: Bearer <agentToken>`
+
+## Admin API token scopes
+
+DB-backed admin API tokens support these first-slice scopes:
+
+- `device:read`
+- `device:control`
+- `logs:read`
+- `logs:export`
+
+Scope enforcement currently maps to the existing REST surface:
+
+- `GET /v1/devices`, `GET /v1/devices/:id`, `GET /v1/device-summary` require `device:read`
+- Device control requests require `device:control`
+- `GET /v1/logs`, `GET /v1/logs/stream`, `GET /v1/log-settings` require `logs:read`
+- `GET /v1/logs/export` requires `logs:export`

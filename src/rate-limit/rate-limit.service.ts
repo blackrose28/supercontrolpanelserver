@@ -5,11 +5,22 @@ type RateLimitBucket = {
   resetAt: number;
 };
 
+export type RateLimitCheckResult =
+  | { ok: true }
+  | { ok: false; retryAfterMs: number };
+
 @Injectable()
 export class RateLimitService {
   private readonly buckets = new Map<string, RateLimitBucket>();
 
   check(key: string, limit: number, windowMs: number) {
+    const result = this.checkDetailed(key, limit, windowMs);
+    if (!result.ok) {
+      throw new HttpException('RATE_LIMITED', HttpStatus.TOO_MANY_REQUESTS);
+    }
+  }
+
+  checkDetailed(key: string, limit: number, windowMs: number): RateLimitCheckResult {
     const now = Date.now();
     const current = this.buckets.get(key);
 
@@ -18,15 +29,19 @@ export class RateLimitService {
         count: 1,
         resetAt: now + windowMs,
       });
-      return;
+      return { ok: true };
     }
 
     if (current.count >= limit) {
-      throw new HttpException('RATE_LIMITED', HttpStatus.TOO_MANY_REQUESTS);
+      return {
+        ok: false,
+        retryAfterMs: Math.max(1, current.resetAt - now),
+      };
     }
 
     current.count += 1;
     this.buckets.set(key, current);
+    return { ok: true };
   }
 
   loginLimit() {

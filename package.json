@@ -7,6 +7,7 @@
     "build": "rimraf dist tsconfig.tsbuildinfo && tsc --outDir dist --pretty false",
     "start": "npm run build && node dist/main.js",
     "dev": "ts-node src/main.ts",
+    "watch": "node --watch --require ts-node/register src/main.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -23,7 +24,8 @@
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.0",
     "uuid": "^9.0.0",
-    "ws": "^8.0.0"
+    "ws": "^8.0.0",
+    "xterm": "^5.3.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

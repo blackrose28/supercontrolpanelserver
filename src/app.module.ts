@@ -9,10 +9,35 @@ import { LogStore } from './logs/log.store';
 import { DatabaseService } from './database/database.service';
 import { AdminSessionService } from './admin/admin-session.service';
 import { RateLimitService } from './rate-limit/rate-limit.service';
+import { AdminApiTokenService } from './admin/admin-api-token.service';
+import { CommandStore } from './commands/command.store';
+import { CommandsController } from './commands/commands.controller';
+import { CommandTimeoutService } from './commands/command-timeout.service';
+import { CommandDispatchService } from './commands/command-dispatch.service';
+import { PtySessionStore } from './pty/pty-session.store';
+import { PtyController } from './pty/pty.controller';
+import { PtyGateway } from './pty/pty.gateway';
+import { PtyHubService } from './pty/pty-hub.service';
+import { PtyAuditStore } from './pty/pty-audit.store';
 
 @Module({
   imports: [],
-  controllers: [DevicesController, HealthController, AdminController, LogsController],
-  providers: [AgentGateway, DeviceStore, LogStore, DatabaseService, AdminSessionService, RateLimitService],
+  controllers: [DevicesController, CommandsController, HealthController, AdminController, LogsController, PtyController],
+  providers: [
+    AgentGateway,
+    DeviceStore,
+    LogStore,
+    DatabaseService,
+    AdminSessionService,
+    AdminApiTokenService,
+    CommandStore,
+    CommandDispatchService,
+    CommandTimeoutService,
+    PtySessionStore,
+    PtyHubService,
+    PtyAuditStore,
+    PtyGateway,
+    RateLimitService,
+  ],
 })
 export class AppModule {}
