@@ -765,6 +765,13 @@ export class AdminController {
                 });
 	              return;
 	            }
+            if (session.recordingEnabled && !session.recordingConsentAt) {
+              debugPty('sendTerminalData blocked pending recording consent', {
+                sessionId: session.sessionId,
+              });
+              setPtyStatus('Acknowledge recording before sending PTY input.', true);
+              return;
+            }
 	            try {
                 debugPty('sendTerminalData outbound', {
                   deviceId: selectedDeviceId,
@@ -956,7 +963,7 @@ export class AdminController {
 	            document.getElementById('pty-detach').disabled = !hasDevice || !hasSession || !attachedByAdminSession;
 	            document.getElementById('pty-close').disabled = !hasDevice || !hasSession || !attachedByAdminSession;
 	            document.getElementById('pty-delete').disabled = !hasDevice || !deletable;
-	            document.getElementById('pty-send-ctrl-c').disabled = !hasDevice || !hasSession || !attachedByAdminSession;
+	            document.getElementById('pty-send-ctrl-c').disabled = !hasDevice || !hasSession || !attachedByAdminSession || !!(session && session.recordingEnabled && !session.recordingConsentAt);
 	            document.getElementById('pty-recording-consent').disabled = !hasDevice || !hasSession || !attachedByAdminSession || !session.recordingEnabled || !!session.recordingConsentAt;
 	            output.classList.toggle('attached', !!attachedByAdminSession);
 	          }
@@ -1094,7 +1101,12 @@ export class AdminController {
                   } else if (payload.warning) {
                     setPtyStatus(String(payload.warning), true);
                   } else if (payload.consentGranted && payload.sessionId) {
+                    const session = currentPtySessions.find((item) => item.sessionId === payload.sessionId);
+                    if (session) {
+                      session.recordingConsentAt = payload.recordingConsentAt || new Date().toISOString();
+                    }
                     setPtyStatus('Recording consent acknowledged for PTY session ' + payload.sessionId + '.');
+                    syncPtySelectionState();
                     await loadPtySessions(selectedDeviceId, { preserveSelection: true }).catch(() => {});
                   } else if (payload.sessionId && payload.detached) {
                     setPtyStatus('Detached from PTY session ' + payload.sessionId + '.');

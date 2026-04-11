@@ -295,6 +295,7 @@ export class PtyGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const record = requirePtySession(this.ptySessions, deviceId, readRequiredSessionId(payload));
     ensureRecordingScope(client.principal, record.recordingEnabled);
     ensureActorOwnsAttachment(record, actor.actorType, actor.actorId);
+    ensureRecordingConsent(record);
     const rateLimit = consumeRateLimit(this.writeRateLimits, record.sessionId, 200, 100, Date.now());
     if (!rateLimit.allowed) {
       throw new PtyGatewayError('PTY_RATE_LIMITED', 'PTY input rate limited', {
@@ -448,6 +449,17 @@ function ensureRecordingScope(principal: AdminAuthPrincipal, recordingEnabled: b
   if (!principal.scopes.includes('device:record')) {
     throw new ForbiddenException('Missing device:record scope');
   }
+}
+
+function ensureRecordingConsent(record: PtySessionRecord) {
+  if (!record.recordingEnabled || record.recordingConsentAt) {
+    return;
+  }
+  throw new PtyGatewayError(
+    'PTY_RECORDING_CONSENT_REQUIRED',
+    'Acknowledge recording before sending PTY input',
+    { consentRequired: true },
+  );
 }
 
 function authenticatePtyPrincipal(
