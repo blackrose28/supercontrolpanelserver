@@ -1,5 +1,6 @@
 import {
   Body,
+  BadRequestException,
   Controller,
   Get,
   Headers,
@@ -257,6 +258,8 @@ export class AdminController {
           .token-scope-pill { background: #eef2ff; color: #3730a3; border-radius: 999px; padding: 3px 8px; font-size: 11px; }
           .token-status.revoked { color: #b91c1c; font-weight: 600; }
           .token-status.active { color: #047857; font-weight: 600; }
+          .token-masked:hover { color: #2563eb; }
+          .token-masked[data-revealed="1"] { color: #dc2626; }
           .server-picker-backdrop { position: fixed; inset: 0; background: rgba(17, 24, 39, 0.45); display: none; align-items: center; justify-content: center; padding: 24px; z-index: 50; }
           .server-picker-backdrop.open { display: flex; }
           .server-picker-modal { width: min(640px, 100%); background: #fff; color: #111827; border-radius: 12px; box-shadow: 0 20px 45px rgba(0,0,0,0.2); padding: 20px; }
@@ -367,6 +370,11 @@ export class AdminController {
            /* Compact devices table */
            .devices-table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
            .devices-table th { background: #f9fafb; font-size: 12px; font-weight: 600; text-transform: uppercase; color: #6b7280; padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; }
+          .devices-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+          .devices-table th.sortable:hover { background: #e5e7eb; }
+          .devices-table th.sortable .sort-indicator::after { content: '⇅'; opacity: 0.4; margin-left: 4px; font-size: 12px; }
+          .devices-table th.sortable.asc .sort-indicator::after { content: '↑'; opacity: 1; }
+          .devices-table th.sortable.desc .sort-indicator::after { content: '↓'; opacity: 1; }
            .devices-table td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; font-size: 13px; }
            .devices-table tr:last-child td { border-bottom: none; }
            .devices-table tr { cursor: pointer; }
@@ -450,8 +458,8 @@ export class AdminController {
            <thead>
              <tr>
                <th style="width:40px;"></th>
-               <th>Device</th>
-               <th style="width:100px;">Last Seen</th>
+               <th class="sortable" data-sort="device">Device <span class="sort-indicator"></span></th>
+               <th class="sortable" data-sort="last-seen" style="width:100px;">Last Seen <span class="sort-indicator"></span></th>
                <th style="width:100px;">Functions</th>
                <th style="width:100px;"></th>
              </tr>
@@ -722,6 +730,8 @@ export class AdminController {
           let transferStream = null;
           let transferStreamDeviceId = null;
           let transferStreamConnectVersion = 0;
+          let deviceSortColumn = 'last-seen';
+          let deviceSortDirection = 'desc';
           let ptySocket = null;
           let currentPtySessions = [];
           let currentPtySessionId = null;
@@ -763,6 +773,33 @@ export class AdminController {
               .replaceAll('>', '&gt;')
               .replaceAll('"', '&quot;')
               .replaceAll("'", '&#39;');
+          }
+
+          function sortDevices(devices, column, direction) {
+            const sorted = devices.slice();
+            sorted.sort((a, b) => {
+              let cmp = 0;
+              if (column === 'device') {
+                cmp = (a.name || '').localeCompare(b.name || '');
+              } else if (column === 'last-seen') {
+                const aTime = a.lastSeenAt ? new Date(a.lastSeenAt).getTime() : 0;
+                const bTime = b.lastSeenAt ? new Date(b.lastSeenAt).getTime() : 0;
+                cmp = aTime - bTime;
+              }
+              return direction === 'desc' ? -cmp : cmp;
+            });
+            return sorted;
+          }
+
+          function applyDeviceSort() {
+            const thead = document.querySelector('.devices-table thead');
+            if (!thead) return;
+            thead.querySelectorAll('.sortable').forEach((th) => {
+              th.classList.remove('asc', 'desc');
+              if (th.dataset.sort === deviceSortColumn) {
+                th.classList.add(deviceSortDirection);
+              }
+            });
           }
 
 function renderRows(devices) {
@@ -1073,14 +1110,44 @@ function renderRows(devices) {
             ).join('') + '</div>';
           }
 
+          function maskTokenId(id) {
+            if (!id || id.length <= 8) return '****';
+            return '*'.repeat(id.length - 4) + id.slice(-4);
+          }
+          let revealedTokenIds = new Set();
+          let tokenRevealTimers = new Map();
+
+          function toggleTokenReveal(tokenId) {
+            if (revealedTokenIds.has(tokenId)) {
+              revealedTokenIds.delete(tokenId);
+              const timer = tokenRevealTimers.get(tokenId);
+              if (timer) { clearTimeout(timer); tokenRevealTimers.delete(tokenId); }
+            } else {
+              revealedTokenIds.add(tokenId);
+              const timer = setTimeout(() => {
+                revealedTokenIds.delete(tokenId);
+                tokenRevealTimers.delete(tokenId);
+                const el = document.querySelector('[data-token-full="' + tokenId + '"]');
+                if (el) { el.textContent = maskTokenId(tokenId); el.dataset.revealed = ''; }
+              }, 30000);
+              tokenRevealTimers.set(tokenId, timer);
+            }
+            const el = document.querySelector('[data-token-full="' + tokenId + '"]');
+            if (el) {
+              el.textContent = revealedTokenIds.has(tokenId) ? tokenId : maskTokenId(tokenId);
+              el.dataset.revealed = revealedTokenIds.has(tokenId) ? '1' : '';
+            }
+          }
+
           function renderTokenRows(tokens) {
             if (!tokens.length) {
               return '';
             }
             return tokens.map((token) => {
               const revoked = !!token.revokedAt;
+              const isRevealed = revealedTokenIds.has(token.tokenId);
               return '<tr>' +
-                '<td>' + escapeHtml(token.label) + '<div style="color:#6b7280;margin-top:4px;">' + escapeHtml(token.tokenId) + '</div></td>' +
+                '<td>' + escapeHtml(token.label) + '<div style="color:#6b7280;margin-top:4px;"><span data-token-full="' + escapeHtml(token.tokenId) + '" data-revealed="' + (isRevealed ? '1' : '') + '" style="cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;" class="token-masked" title="Click to ' + (isRevealed ? 'mask' : 'reveal') + '">' + escapeHtml(isRevealed ? token.tokenId : maskTokenId(token.tokenId)) + '</span></div></td>' +
                 '<td>' + renderTokenScopes(token.scopes) + '</td>' +
                 '<td>' + escapeHtml(formatDateTime(token.createdAt)) + '</td>' +
                 '<td>' + escapeHtml(formatDateTime(token.expiresAt)) + '</td>' +
@@ -2824,11 +2891,12 @@ function renderRows(devices) {
               }
               const devices = await response.json();
               currentDevices = devices;
+              applyDeviceSort();
               const searchFilter = (document.getElementById('devices-search')?.value || '').toLowerCase().trim();
               const filtered = searchFilter 
                 ? devices.filter(d => d.id.toLowerCase().includes(searchFilter) || (d.name && d.name.toLowerCase().includes(searchFilter)))
                 : devices;
-              document.getElementById('devices-tbody').innerHTML = renderRows(filtered);
+              document.getElementById('devices-tbody').innerHTML = renderRows(sortDevices(filtered, deviceSortColumn, deviceSortDirection));
               document.getElementById('devices-meta').textContent = renderMeta(devices);
               renderAlerts();
             } catch (error) {
@@ -2841,7 +2909,25 @@ function renderRows(devices) {
             const filtered = searchFilter 
               ? currentDevices.filter(d => d.id.toLowerCase().includes(searchFilter) || (d.name && d.name.toLowerCase().includes(searchFilter)))
               : currentDevices;
-            document.getElementById('devices-tbody').innerHTML = renderRows(filtered);
+            document.getElementById('devices-tbody').innerHTML = renderRows(sortDevices(filtered, deviceSortColumn, deviceSortDirection));
+          });
+
+          document.querySelector('.devices-table thead')?.addEventListener('click', (event) => {
+            const th = event.target.closest('th.sortable');
+            if (!th) return;
+            const column = th.dataset.sort;
+            if (deviceSortColumn === column) {
+              deviceSortDirection = deviceSortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+              deviceSortColumn = column;
+              deviceSortDirection = column === 'device' ? 'asc' : 'desc';
+            }
+            applyDeviceSort();
+            const searchFilter = (document.getElementById('devices-search')?.value || '').toLowerCase().trim();
+            const filtered = searchFilter
+              ? currentDevices.filter(d => d.id.toLowerCase().includes(searchFilter) || (d.name && d.name.toLowerCase().includes(searchFilter)))
+              : currentDevices;
+            document.getElementById('devices-tbody').innerHTML = renderRows(sortDevices(filtered, deviceSortColumn, deviceSortDirection));
           });
 
           function appendLog(event) {
@@ -2950,7 +3036,7 @@ function renderRows(devices) {
               clearPtySelection();
             }
             selectedDeviceId = deviceId;
-            document.getElementById('devices-tbody').innerHTML = renderRows(currentDevices);
+            document.getElementById('devices-tbody').innerHTML = renderRows(sortDevices(currentDevices, deviceSortColumn, deviceSortDirection));
 
             closeStream();
 
@@ -3876,6 +3962,11 @@ function renderRows(devices) {
           });
 
           document.getElementById('tokens-tbody').addEventListener('click', async (event) => {
+            const maskedSpan = event.target.closest('.token-masked');
+            if (maskedSpan) {
+              toggleTokenReveal(maskedSpan.dataset.tokenFull);
+              return;
+            }
             const button = event.target.closest('button[data-token-id]');
             if (!button || button.disabled) {
               return;
@@ -3933,10 +4024,19 @@ function renderRows(devices) {
               }).join('');
               
               alertsPanelList.querySelectorAll('.alerts-panel-item').forEach(item => {
-                item.addEventListener('click', () => {
+                item.addEventListener('click', async () => {
                   const id = item.dataset.id;
                   dismissedAlertIds.add(id);
                   localStorage.setItem('dismissedAlerts', JSON.stringify([...dismissedAlertIds]));
+                  item.style.opacity = '0.4';
+                  try {
+                    await fetch('/admin/v1/alerts/dismiss', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ csrfToken, alertId: id }),
+                      credentials: 'same-origin',
+                    });
+                  } catch { /* server dismiss is best-effort */ }
                   item.remove();
                   const remaining = alertsPanelList.querySelectorAll('.alerts-panel-item').length;
                   alertsBadge.textContent = remaining;
@@ -4080,6 +4180,20 @@ function renderRows(devices) {
       alerts: alerts.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()),
       unreadCount: alerts.length,
     };
+  }
+
+  @Post('v1/alerts/dismiss')
+  dismissAlert(
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Body('alertId') alertId: string | undefined,
+    @Headers('cookie') cookie?: string,
+  ) {
+    requireAdminSessionAuthorized(cookie, this.adminSessions);
+    requireCsrf(cookie, csrfToken);
+    if (!alertId || typeof alertId !== 'string') {
+      throw new BadRequestException('alertId is required');
+    }
+    return { ok: true, dismissed: alertId };
   }
 
   @Post('api-tokens')
