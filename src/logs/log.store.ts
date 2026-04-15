@@ -227,6 +227,46 @@ export class LogStore {
     };
   }
 
+  getAllRuntimeSummaries(): DeviceRuntimeSummary[] {
+    const rows = this.databaseService.connection
+      .prepare(
+        `
+          SELECT deviceId, summaryJson, updatedAt
+          FROM device_runtime_state
+        `,
+      )
+      .all() as Array<{
+        deviceId: string;
+        summaryJson?: string;
+        updatedAt?: string;
+      }>;
+
+    return rows.map((row) => {
+      if (!row.summaryJson) {
+        return {
+          deviceId: row.deviceId,
+          updatedAt: row.updatedAt ?? null,
+          functions: {},
+        };
+      }
+      try {
+        const parsed = JSON.parse(row.summaryJson);
+        return {
+          deviceId: row.deviceId,
+          updatedAt: row.updatedAt ?? null,
+          functions: parsed?.functions && typeof parsed.functions === 'object' ? parsed.functions : {},
+          inventory: parsed?.inventory,
+        };
+      } catch {
+        return {
+          deviceId: row.deviceId,
+          updatedAt: row.updatedAt ?? null,
+          functions: {},
+        };
+      }
+    });
+  }
+
   private trimDeviceHistory(deviceId: string) {
     this.databaseService.connection
       .prepare(

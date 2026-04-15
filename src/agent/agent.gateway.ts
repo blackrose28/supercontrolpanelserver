@@ -13,6 +13,7 @@ import { redactTelemetryPayload } from '../logs/log-redaction';
 import { PtySessionStore } from '../pty/pty-session.store';
 import { PtyHubService } from '../pty/pty-hub.service';
 import { PtyAuditStore } from '../pty/pty-audit.store';
+import { FileTransferStore } from '../file-ops/file-transfer.store';
 
 @WebSocketGateway({ path: '/agent' })
 export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -20,6 +21,15 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   server: Server;
 
   private seqCounter = 0;
+  private readonly pendingReqResponses = new Map<
+    number,
+    {
+      deviceId: string;
+      resolve: (value: { ok: true; payload: unknown; ts: string }) => void;
+      reject: (reason?: unknown) => void;
+      timer: NodeJS.Timeout;
+    }
+  >();
 
   constructor(
     private deviceStore: DeviceStore,
@@ -28,6 +38,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly ptySessionStore: PtySessionStore,
     private readonly ptyHub: PtyHubService,
     private readonly ptyAudit: PtyAuditStore,
+    private readonly fileTransferStore: FileTransferStore,
   ) {}
 
   handleConnection(client: any, request: any) {
@@ -258,6 +269,47 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     };
   }
 
+  dispatchFileOpCommand(
+    deviceId: string,
+    type: string,
+    payload: Record<string, unknown>,
+    commandId?: string,
+  ) {
+    const session = this.deviceStore.getSessionByDeviceId(deviceId);
+    if (!session?.ws) {
+      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
+    }
+
+    const envelope = this.sendMessage(session.ws, {
+      type,
+      commandId,
+      payload,
+    });
+
+    return {
+      ok: true,
+      deviceId,
+      reqSeq: envelope.seq,
+      requestedAt: envelope.ts,
+    };
+  }
+
+  awaitReqResponse(deviceId: string, reqSeq: number, timeoutMs = 30_000) {
+    return new Promise<{ ok: true; payload: unknown; ts: string }>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingReqResponses.delete(reqSeq);
+        reject(new Error(`Timed out waiting for reqSeq ${reqSeq}`));
+      }, timeoutMs);
+
+      this.pendingReqResponses.set(reqSeq, {
+        deviceId,
+        resolve,
+        reject,
+        timer,
+      });
+    });
+  }
+
   openPty(
     deviceId: string,
     input: {
@@ -410,6 +462,12 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
         case 'pty-exit':
           this.handlePtyExit(envelope, client);
           break;
+        case 'transfer_progress':
+          this.handleTransferProgress(envelope, client);
+          break;
+        case 'transfer_status':
+          this.handleTransferStatus(envelope, client);
+          break;
         default:
           console.log(`Unknown message type: ${envelope.type}`);
       }
@@ -482,6 +540,17 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
+    const pendingResponse = this.pendingReqResponses.get(reqSeq);
+    if (pendingResponse && pendingResponse.deviceId === client.deviceId) {
+      clearTimeout(pendingResponse.timer);
+      this.pendingReqResponses.delete(reqSeq);
+      pendingResponse.resolve({
+        ok: true,
+        payload: envelope.payload ?? null,
+        ts: envelope.ts || new Date().toISOString(),
+      });
+    }
+
     const command = this.commandStore.findByReqSeq(client.deviceId, reqSeq);
     const pendingPty = this.ptySessionStore.consumePendingReq(client.deviceId, reqSeq);
     if (pendingPty) {
@@ -516,6 +585,20 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const reqSeq = typeof envelope.reqSeq === 'number' ? envelope.reqSeq : null;
     if (reqSeq == null) {
       return;
+    }
+
+    const pendingResponse = this.pendingReqResponses.get(reqSeq);
+    if (pendingResponse && pendingResponse.deviceId === client.deviceId) {
+      clearTimeout(pendingResponse.timer);
+      this.pendingReqResponses.delete(reqSeq);
+      pendingResponse.reject({
+        code:
+          envelope.payload && typeof envelope.payload === 'object' && typeof envelope.payload.error === 'string'
+            ? envelope.payload.error
+            : 'AGENT_NACK',
+        payload: envelope.payload ?? null,
+        ts: envelope.ts || new Date().toISOString(),
+      });
     }
 
     const command = this.commandStore.findByReqSeq(client.deviceId, reqSeq);
@@ -690,6 +773,193 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
         },
       });
     }
+  }
+
+  private handleTransferProgress(envelope: any, client: any) {
+    const payload =
+      envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
+    const transferId =
+      typeof payload.transferId === 'string' ? payload.transferId.trim() : '';
+    if (!transferId) {
+      return;
+    }
+
+    const existing = this.fileTransferStore.get(transferId);
+    if (!existing || existing.deviceId !== client.deviceId) {
+      return;
+    }
+
+    if (existing.state === 'canceled' && existing.reasonCode === 'transfer_stop_requested') {
+      this.sendMessage(client, {
+        type: 'ack',
+        reqSeq: envelope.seq,
+        payload: { status: 'ok' },
+      });
+      return;
+    }
+
+    this.fileTransferStore.updateProgress(
+      transferId,
+      envelope.ts || new Date().toISOString(),
+      {
+        attempt:
+          typeof payload.attempt === 'number' && Number.isFinite(payload.attempt)
+            ? payload.attempt
+            : existing.attempt,
+        maxAttempts:
+          typeof payload.maxAttempts === 'number' && Number.isFinite(payload.maxAttempts)
+            ? payload.maxAttempts
+            : existing.maxAttempts,
+        resumeSupported:
+          typeof payload.resumeSupported === 'boolean'
+            ? payload.resumeSupported
+            : existing.resumeSupported,
+        retryScheduled:
+          typeof payload.retryScheduled === 'boolean'
+            ? payload.retryScheduled
+            : existing.retryScheduled,
+        resumeToken:
+          typeof payload.resumeToken === 'string'
+            ? payload.resumeToken
+            : payload.resumeToken === null
+              ? null
+              : existing.resumeToken,
+        resumeOffsetBytes:
+          typeof payload.resumeOffsetBytes === 'number' && Number.isFinite(payload.resumeOffsetBytes)
+            ? payload.resumeOffsetBytes
+            : payload.resumeOffsetBytes === null
+              ? null
+              : existing.resumeOffsetBytes,
+        tempPathHint:
+          typeof payload.tempPathHint === 'string'
+            ? payload.tempPathHint
+            : payload.tempPathHint === null
+              ? null
+              : existing.tempPathHint,
+        bytesTransferred:
+          typeof payload.bytesTransferred === 'number' && Number.isFinite(payload.bytesTransferred)
+            ? payload.bytesTransferred
+            : existing.bytesTransferred,
+        bytesTotal:
+          typeof payload.bytesTotal === 'number' && Number.isFinite(payload.bytesTotal)
+            ? payload.bytesTotal
+            : payload.bytesTotal === null
+              ? null
+              : existing.bytesTotal,
+        percent:
+          typeof payload.percent === 'number' && Number.isFinite(payload.percent)
+            ? payload.percent
+            : payload.percent === null
+              ? null
+              : existing.percent,
+        throughputBps:
+          typeof payload.throughputBps === 'number' && Number.isFinite(payload.throughputBps)
+            ? payload.throughputBps
+            : payload.throughputBps === null
+              ? null
+              : existing.throughputBps,
+        etaSec:
+          typeof payload.etaSec === 'number' && Number.isFinite(payload.etaSec)
+            ? payload.etaSec
+            : payload.etaSec === null
+              ? null
+              : existing.etaSec,
+        phase: typeof payload.phase === 'string' ? payload.phase : existing.phase,
+        message: typeof payload.message === 'string' ? payload.message : existing.message,
+      },
+    );
+
+    this.sendMessage(client, {
+      type: 'ack',
+      reqSeq: envelope.seq,
+      payload: { status: 'ok' },
+    });
+  }
+
+  private handleTransferStatus(envelope: any, client: any) {
+    const payload =
+      envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
+    const transferId =
+      typeof payload.transferId === 'string' ? payload.transferId.trim() : '';
+    if (!transferId) {
+      return;
+    }
+
+    const existing = this.fileTransferStore.get(transferId);
+    if (!existing || existing.deviceId !== client.deviceId) {
+      return;
+    }
+
+    const state =
+      typeof payload.state === 'string' && payload.state.trim().length
+        ? payload.state.trim()
+        : existing.state;
+    if (
+      state === 'queued'
+      || state === 'starting'
+      || state === 'running'
+      || state === 'succeeded'
+      || state === 'failed'
+      || state === 'canceled'
+    ) {
+      const nextState = existing.state === 'canceled'
+        && existing.reasonCode === 'transfer_stop_requested'
+        && state === 'failed'
+        ? 'canceled'
+        : state;
+      this.fileTransferStore.markState(
+        transferId,
+        nextState,
+        envelope.ts || new Date().toISOString(),
+        {
+          phase: typeof payload.phase === 'string' ? payload.phase : existing.phase,
+          reasonCode: typeof payload.reasonCode === 'string' ? payload.reasonCode : existing.reasonCode,
+          reasonDetail:
+            typeof payload.reasonDetail === 'string' ? payload.reasonDetail : existing.reasonDetail,
+          message: typeof payload.message === 'string' ? payload.message : existing.message,
+          attempt:
+            typeof payload.attempt === 'number' && Number.isFinite(payload.attempt)
+              ? payload.attempt
+              : existing.attempt,
+          maxAttempts:
+            typeof payload.maxAttempts === 'number' && Number.isFinite(payload.maxAttempts)
+              ? payload.maxAttempts
+              : existing.maxAttempts,
+          resumeSupported:
+            typeof payload.resumeSupported === 'boolean'
+              ? payload.resumeSupported
+              : existing.resumeSupported,
+          retryScheduled:
+            typeof payload.retryScheduled === 'boolean'
+              ? payload.retryScheduled
+              : existing.retryScheduled,
+          resumeToken:
+            typeof payload.resumeToken === 'string'
+              ? payload.resumeToken
+              : payload.resumeToken === null
+                ? null
+                : existing.resumeToken,
+          resumeOffsetBytes:
+            typeof payload.resumeOffsetBytes === 'number' && Number.isFinite(payload.resumeOffsetBytes)
+              ? payload.resumeOffsetBytes
+              : payload.resumeOffsetBytes === null
+                ? null
+                : existing.resumeOffsetBytes,
+          tempPathHint:
+            typeof payload.tempPathHint === 'string'
+              ? payload.tempPathHint
+              : payload.tempPathHint === null
+                ? null
+                : existing.tempPathHint,
+        },
+      );
+    }
+
+    this.sendMessage(client, {
+      type: 'ack',
+      reqSeq: envelope.seq,
+      payload: { status: 'ok' },
+    });
   }
 
   private handleCommandStatus(envelope: any, client: any) {

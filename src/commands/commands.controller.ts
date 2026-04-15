@@ -5,6 +5,8 @@ import { AdminApiTokenService } from '../admin/admin-api-token.service';
 import { CommandStore } from './command.store';
 import { DeviceStore } from '../devices/device.store';
 import { CommandDispatchService } from './command-dispatch.service';
+import { RateLimitService } from '../rate-limit/rate-limit.service';
+import { getClientId } from '../rate-limit/client-id';
 
 @Controller('v1')
 export class CommandsController {
@@ -14,6 +16,7 @@ export class CommandsController {
     private readonly commandDispatch: CommandDispatchService,
     private readonly adminSessions: AdminSessionService,
     private readonly adminApiTokens: AdminApiTokenService,
+    private readonly rateLimitService: RateLimitService,
   ) {}
 
   @Post('commands')
@@ -25,6 +28,8 @@ export class CommandsController {
     @Body('csrfToken') csrfToken: string | undefined,
     @Headers('authorization') auth?: string,
     @Headers('cookie') cookie?: string,
+    @Headers('x-forwarded-for') forwardedFor?: string,
+    @Headers('x-real-ip') realIp?: string,
   ) {
     const principal = requireAdminMutationAuthorized(
       auth,
@@ -33,6 +38,13 @@ export class CommandsController {
       this.adminSessions,
       this.adminApiTokens,
       ['device:control'],
+    );
+
+    enforceFileOpRateLimit(
+      this.rateLimitService,
+      getClientId(forwardedFor, realIp),
+      String(deviceId || '').trim(),
+      String(commandType || '').trim(),
     );
 
     return this.commandDispatch.dispatchGenericCommand({
@@ -116,4 +128,100 @@ export class CommandsController {
       items: this.commandStore.listAudit(normalizedCommandId),
     };
   }
+}
+
+function enforceFileOpRateLimit(
+  rateLimitService: RateLimitService,
+  clientId: string,
+  deviceId: string,
+  commandType: string,
+) {
+  const normalizedCommandType = commandType.trim();
+  if (!normalizedCommandType) {
+    return;
+  }
+
+  let bucket:
+    | { key: string; limit: number; windowMs: number; message: string }
+    | null = null;
+
+  if (isBrowserReadCommand(normalizedCommandType)) {
+    bucket = {
+      key: `browser-read:${deviceId}:${clientId}`,
+      limit: rateLimitService.browserReadLimit(),
+      windowMs: rateLimitService.browserReadWindowMs(),
+      message: 'Remote browser requests are temporarily rate limited',
+    };
+  } else if (isBrowserMutationCommand(normalizedCommandType)) {
+    bucket = {
+      key: `browser-mutation:${deviceId}:${clientId}`,
+      limit: rateLimitService.browserMutationLimit(),
+      windowMs: rateLimitService.browserMutationWindowMs(),
+      message: 'Remote browser mutations are temporarily rate limited',
+    };
+  } else if (isTransferStartCommand(normalizedCommandType)) {
+    bucket = {
+      key: `transfer-start:${deviceId}:${clientId}`,
+      limit: rateLimitService.transferStartLimit(),
+      windowMs: rateLimitService.transferStartWindowMs(),
+      message: 'Transfer starts are temporarily rate limited',
+    };
+  } else if (isFileOpCommand(normalizedCommandType)) {
+    bucket = {
+      key: `file-op:${deviceId}:${clientId}`,
+      limit: rateLimitService.fileOpCommandLimit(),
+      windowMs: rateLimitService.fileOpCommandWindowMs(),
+      message: 'File operations are temporarily rate limited',
+    };
+  }
+
+  if (!bucket) {
+    return;
+  }
+
+  const result = rateLimitService.checkDetailed(bucket.key, bucket.limit, bucket.windowMs);
+  if (result.ok) {
+    return;
+  }
+
+  throw new HttpException(
+    {
+      type: 'nack',
+      payload: {
+        code: 'rate_limited',
+        rate_limited: true,
+        retryAfterMs: 'retryAfterMs' in result ? result.retryAfterMs : 1000,
+        commandType: normalizedCommandType,
+        message: bucket.message,
+      },
+    },
+    HttpStatus.TOO_MANY_REQUESTS,
+  );
+}
+
+function isBrowserReadCommand(commandType: string) {
+  return commandType === 'list_remote_browser_children' || commandType === 'stat_remote_browser_path';
+}
+
+function isBrowserMutationCommand(commandType: string) {
+  return (
+    commandType === 'open_remote_browser'
+    || commandType === 'close_remote_browser'
+    || commandType === 'create_remote_browser_directory'
+    || commandType === 'delete_remote_browser_path'
+  );
+}
+
+function isTransferStartCommand(commandType: string) {
+  return commandType === 'start_scp_upload' || commandType === 'start_scp_download';
+}
+
+function isFileOpCommand(commandType: string) {
+  return (
+    isBrowserReadCommand(commandType)
+    || isBrowserMutationCommand(commandType)
+    || isTransferStartCommand(commandType)
+    || commandType === 'scp_upload'
+    || commandType === 'scp_download'
+  );
 }

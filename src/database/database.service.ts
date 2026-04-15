@@ -150,6 +150,75 @@ export class DatabaseService {
         FOREIGN KEY (sessionId) REFERENCES pty_sessions(sessionId)
       );
 
+      CREATE TABLE IF NOT EXISTS file_transfers (
+        id TEXT PRIMARY KEY,
+        transferId TEXT NOT NULL UNIQUE,
+        deviceId TEXT NOT NULL,
+        serverId TEXT NOT NULL,
+        browserSessionId TEXT,
+        sessionId TEXT,
+        actorType TEXT,
+        actorId TEXT,
+        state TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        localPath TEXT,
+        remotePath TEXT,
+        recursive INTEGER NOT NULL DEFAULT 0,
+        overwritePolicy TEXT,
+        followSymlinks INTEGER NOT NULL DEFAULT 0,
+        rateLimitKbps INTEGER,
+        verifyChecksum INTEGER NOT NULL DEFAULT 0,
+        preserveMtime INTEGER NOT NULL DEFAULT 0,
+        preserveMode INTEGER NOT NULL DEFAULT 0,
+        attempt INTEGER NOT NULL DEFAULT 1,
+        maxAttempts INTEGER NOT NULL DEFAULT 1,
+        resumeSupported INTEGER NOT NULL DEFAULT 0,
+        retryScheduled INTEGER NOT NULL DEFAULT 0,
+        resumeToken TEXT,
+        resumeOffsetBytes INTEGER,
+        tempPathHint TEXT,
+        progressEventCount INTEGER NOT NULL DEFAULT 0,
+        firstProgressAt TEXT,
+        lastProgressAt TEXT,
+        finalizeSeen INTEGER NOT NULL DEFAULT 0,
+        bytesTransferred INTEGER NOT NULL DEFAULT 0,
+        bytesTotal INTEGER,
+        percent REAL,
+        throughputBps REAL,
+        etaSec REAL,
+        phase TEXT,
+        reasonCode TEXT,
+        reasonDetail TEXT,
+        message TEXT,
+        commandId TEXT,
+        reqSeq INTEGER,
+        startedAt TEXT,
+        finishedAt TEXT,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        FOREIGN KEY (deviceId) REFERENCES devices(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS remote_browser_sessions (
+        id TEXT PRIMARY KEY,
+        browserSessionId TEXT NOT NULL UNIQUE,
+        deviceId TEXT NOT NULL,
+        serverId TEXT NOT NULL,
+        actorType TEXT,
+        actorId TEXT,
+        state TEXT NOT NULL,
+        rootPath TEXT,
+        currentPath TEXT,
+        failureCode TEXT,
+        failureDetail TEXT,
+        openedAt TEXT NOT NULL,
+        lastActiveAt TEXT,
+        closedAt TEXT,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        FOREIGN KEY (deviceId) REFERENCES devices(id)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_devices_agent_token
         ON devices(agentToken);
 
@@ -179,6 +248,18 @@ export class DatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_pty_audit_session_ts
         ON pty_audit(sessionId, ts ASC);
+
+      CREATE INDEX IF NOT EXISTS idx_file_transfers_device_updated
+        ON file_transfers(deviceId, updatedAt DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_file_transfers_state_updated
+        ON file_transfers(state, updatedAt DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_remote_browser_sessions_device_updated
+        ON remote_browser_sessions(deviceId, updatedAt DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_remote_browser_sessions_state_updated
+        ON remote_browser_sessions(state, updatedAt DESC);
     `);
 
     const ptySessionColumns = this.db
@@ -186,6 +267,46 @@ export class DatabaseService {
       .all() as Array<{ name?: string }>;
     if (!ptySessionColumns.some((column) => column.name === 'deletedAt')) {
       this.db.exec(`ALTER TABLE pty_sessions ADD COLUMN deletedAt TEXT;`);
+    }
+
+    const fileTransferColumns = this.db
+      .prepare(`PRAGMA table_info(file_transfers)`)
+      .all() as Array<{ name?: string }>;
+    if (!fileTransferColumns.some((column) => column.name === 'attempt')) {
+      this.db.exec(`ALTER TABLE file_transfers ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1;`);
+    }
+    if (!fileTransferColumns.some((column) => column.name === 'maxAttempts')) {
+      this.db.exec(`ALTER TABLE file_transfers ADD COLUMN maxAttempts INTEGER NOT NULL DEFAULT 1;`);
+    }
+    if (!fileTransferColumns.some((column) => column.name === 'resumeSupported')) {
+      this.db.exec(`ALTER TABLE file_transfers ADD COLUMN resumeSupported INTEGER NOT NULL DEFAULT 0;`);
+    }
+    if (!fileTransferColumns.some((column) => column.name === 'retryScheduled')) {
+      this.db.exec(`ALTER TABLE file_transfers ADD COLUMN retryScheduled INTEGER NOT NULL DEFAULT 0;`);
+    }
+    if (!fileTransferColumns.some((column) => column.name === 'sessionId')) {
+      this.db.exec(`ALTER TABLE file_transfers ADD COLUMN sessionId TEXT;`);
+    }
+    if (!fileTransferColumns.some((column) => column.name === 'resumeToken')) {
+      this.db.exec(`ALTER TABLE file_transfers ADD COLUMN resumeToken TEXT;`);
+    }
+    if (!fileTransferColumns.some((column) => column.name === 'resumeOffsetBytes')) {
+      this.db.exec(`ALTER TABLE file_transfers ADD COLUMN resumeOffsetBytes INTEGER;`);
+    }
+    if (!fileTransferColumns.some((column) => column.name === 'tempPathHint')) {
+      this.db.exec(`ALTER TABLE file_transfers ADD COLUMN tempPathHint TEXT;`);
+    }
+    if (!fileTransferColumns.some((column) => column.name === 'progressEventCount')) {
+      this.db.exec(`ALTER TABLE file_transfers ADD COLUMN progressEventCount INTEGER NOT NULL DEFAULT 0;`);
+    }
+    if (!fileTransferColumns.some((column) => column.name === 'firstProgressAt')) {
+      this.db.exec(`ALTER TABLE file_transfers ADD COLUMN firstProgressAt TEXT;`);
+    }
+    if (!fileTransferColumns.some((column) => column.name === 'lastProgressAt')) {
+      this.db.exec(`ALTER TABLE file_transfers ADD COLUMN lastProgressAt TEXT;`);
+    }
+    if (!fileTransferColumns.some((column) => column.name === 'finalizeSeen')) {
+      this.db.exec(`ALTER TABLE file_transfers ADD COLUMN finalizeSeen INTEGER NOT NULL DEFAULT 0;`);
     }
   }
 }

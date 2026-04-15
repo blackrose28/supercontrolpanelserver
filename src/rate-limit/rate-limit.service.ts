@@ -68,6 +68,38 @@ export class RateLimitService {
     return this.parsePositiveInt(process.env.CC_RATE_LIMIT_INGEST_WINDOW_MS, 60 * 1000);
   }
 
+  fileOpCommandLimit() {
+    return this.parsePositiveInt(process.env.CC_RATE_LIMIT_FILE_OP_COMMAND_MAX, 30);
+  }
+
+  fileOpCommandWindowMs() {
+    return this.parsePositiveInt(process.env.CC_RATE_LIMIT_FILE_OP_COMMAND_WINDOW_MS, 60 * 1000);
+  }
+
+  browserReadLimit() {
+    return this.parsePositiveInt(process.env.CC_RATE_LIMIT_BROWSER_READ_MAX, 120);
+  }
+
+  browserReadWindowMs() {
+    return this.parsePositiveInt(process.env.CC_RATE_LIMIT_BROWSER_READ_WINDOW_MS, 60 * 1000);
+  }
+
+  browserMutationLimit() {
+    return this.parsePositiveInt(process.env.CC_RATE_LIMIT_BROWSER_MUTATION_MAX, 30);
+  }
+
+  browserMutationWindowMs() {
+    return this.parsePositiveInt(process.env.CC_RATE_LIMIT_BROWSER_MUTATION_WINDOW_MS, 60 * 1000);
+  }
+
+  transferStartLimit() {
+    return this.parsePositiveInt(process.env.CC_RATE_LIMIT_TRANSFER_START_MAX, 12);
+  }
+
+  transferStartWindowMs() {
+    return this.parsePositiveInt(process.env.CC_RATE_LIMIT_TRANSFER_START_WINDOW_MS, 60 * 1000);
+  }
+
   private parsePositiveInt(raw: string | undefined, fallback: number): number {
     const value = Number(raw);
     if (!Number.isFinite(value) || value < 1) {

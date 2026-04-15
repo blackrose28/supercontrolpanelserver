@@ -33,11 +33,15 @@ import {
   AdminApiTokenScope,
   AdminApiTokenService,
 } from './admin-api-token.service';
+import { LogStore } from '../logs/log.store';
+import { FileTransferStore } from '../file-ops/file-transfer.store';
 
 @Controller('admin')
 export class AdminController {
   constructor(
     private readonly deviceStore: DeviceStore,
+    private readonly logStore: LogStore,
+    private readonly fileTransferStore: FileTransferStore,
     private readonly adminSessions: AdminSessionService,
     private readonly adminApiTokens: AdminApiTokenService,
     private readonly rateLimitService: RateLimitService,
@@ -161,15 +165,24 @@ export class AdminController {
           .alert-card.critical { border-left-color: #dc2626; }
           .alert-card.warning { border-left-color: #f59e0b; }
           .alert-empty { color: #9a3412; }
-          .summary-panel { margin-top: 24px; background: white; color: #111827; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-          .summary-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
-          .summary-meta { color: #6b7280; font-size: 13px; margin-bottom: 12px; }
-          .summary-actions { margin-bottom: 12px; }
-          .summary-actions button { border: 1px solid #d1d5db; background: #fff; color: #111827; border-radius: 6px; padding: 8px 10px; font-size: 12px; cursor: pointer; }
-          .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
-          .summary-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background: #f9fafb; }
-          .summary-card.alert { border-color: #fca5a5; background: #fff1f2; }
-          .summary-card h3 { margin: 0 0 6px; font-size: 14px; }
+.summary-panel { margin-top: 24px; background: white; color: #111827; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+           .summary-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+           .summary-meta { color: #6b7280; font-size: 13px; margin-bottom: 12px; }
+           .summary-actions { margin-bottom: 12px; }
+           .summary-actions button { border: 1px solid #d1d5db; background: #fff; color: #111827; border-radius: 6px; padding: 8px 10px; font-size: 12px; cursor: pointer; }
+           .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+           .summary-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; background: #f9fafb; }
+           .summary-card.alert { border-color: #fca5a5; background: #fff1f2; }
+           .summary-card h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+           .summary-card .summary-state { font-weight: 500; font-size: 11px; display: inline-block; padding: 2px 6px; border-radius: 4px; margin-left: auto; }
+           .summary-card .summary-state.running { background: #d1fae5; color: #059669; }
+           .summary-card .summary-state.idle { background: #f3f4f6; color: #6b7280; }
+           .summary-card .summary-state.error { background: #fee2e2; color: #dc2626; }
+           .summary-card .summary-state.starting, .summary-card .summary-state.stopping { background: #fef3c7; color: #d97706; }
+           .summary-card .summary-info { font-size: 11px; color: #6b7280; margin-top: 4px; }
+           .summary-card .summary-actions { margin-top: 8px; display: flex; gap: 6px; }
+           .summary-card .summary-actions button { border: 1px solid #d1d5db; background: #fff; color: #374151; border-radius: 4px; padding: 4px 8px; font-size: 11px; cursor: pointer; }
+           .summary-card .summary-actions button:hover { background: #f9fafb; }
           .summary-state { font-weight: 600; }
           .summary-state.running, .summary-state.connected { color: #059669; }
           .summary-state.stopping, .summary-state.idle { color: #b45309; }
@@ -259,6 +272,66 @@ export class AdminController {
           .server-picker-actions button.primary { background: #111827; color: #fff; }
           .server-picker-actions button[disabled] { opacity: 0.5; cursor: default; }
           .server-picker-empty { color: #6b7280; font-size: 13px; padding: 12px; border: 1px dashed #d1d5db; border-radius: 10px; }
+          .remote-browser-backdrop { position: fixed; inset: 0; background: rgba(17, 24, 39, 0.55); display: none; align-items: center; justify-content: center; padding: 24px; z-index: 60; }
+          .remote-browser-backdrop.open { display: flex; }
+          .remote-browser-modal { width: min(900px, 100%); max-height: 90vh; overflow: hidden; display: grid; grid-template-rows: auto auto auto 1fr auto; gap: 12px; background: #fff; color: #111827; border-radius: 12px; box-shadow: 0 20px 45px rgba(0,0,0,0.25); padding: 20px; }
+          .remote-browser-title { font-size: 18px; font-weight: 600; }
+          .remote-browser-note { color: #6b7280; font-size: 13px; }
+          .remote-browser-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+          .remote-browser-toolbar button, .remote-browser-toolbar input { border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+          .remote-browser-toolbar input { flex: 1 1 280px; min-width: 220px; }
+          .remote-browser-status { color: #4b5563; font-size: 12px; min-height: 18px; }
+          .remote-browser-status.error { color: #b91c1c; }
+          .remote-browser-list { border: 1px solid #e5e7eb; border-radius: 10px; overflow: auto; min-height: 320px; background: #f9fafb; }
+          .remote-browser-empty { padding: 16px; color: #6b7280; font-size: 13px; }
+          .remote-browser-item { width: 100%; border: 0; border-bottom: 1px solid #e5e7eb; background: transparent; text-align: left; padding: 12px 14px; cursor: pointer; display: grid; gap: 4px; }
+          .remote-browser-item:last-child { border-bottom: 0; }
+          .remote-browser-item.selected { background: #eff6ff; box-shadow: inset 0 0 0 2px rgba(37,99,235,0.15); }
+          .remote-browser-item-name { font-weight: 600; }
+          .remote-browser-item-meta { color: #6b7280; font-size: 12px; }
+          .remote-browser-actions { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: center; }
+          .remote-browser-actions .group { display: flex; gap: 8px; flex-wrap: wrap; }
+          .remote-browser-actions button { border: 1px solid #d1d5db; background: #fff; color: #111827; border-radius: 8px; padding: 9px 12px; cursor: pointer; }
+          .remote-browser-actions button.primary { background: #111827; color: #fff; }
+          .remote-browser-actions button[disabled] { opacity: 0.5; cursor: default; }
+          .remote-browser-transfer { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #f9fafb; display: grid; gap: 10px; }
+          .remote-browser-transfer-title { font-size: 14px; font-weight: 600; color: #111827; }
+          .remote-browser-transfer-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+          .remote-browser-transfer-field { display: grid; gap: 6px; }
+          .remote-browser-transfer-field label { font-size: 12px; color: #374151; }
+          .remote-browser-transfer-field input, .remote-browser-transfer-field select { border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 10px; font-size: 13px; width: 100%; box-sizing: border-box; }
+          .remote-browser-transfer-options { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: #374151; }
+          .remote-browser-transfer-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+          .remote-browser-transfer-buttons button { border: 1px solid #d1d5db; background: #fff; color: #111827; border-radius: 8px; padding: 9px 12px; cursor: pointer; }
+          .remote-browser-transfer-buttons button.primary { background: #111827; color: #fff; }
+          .remote-browser-transfer-hint { font-size: 12px; color: #6b7280; }
+          .transfers-panel { margin-top: 24px; background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+          .transfers-header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; margin-bottom: 12px; }
+          .transfers-title { font-size: 16px; font-weight: 600; }
+          .transfers-note { color: #6b7280; font-size: 13px; }
+          .transfers-list { display: grid; gap: 12px; }
+          .transfer-empty { color: #6b7280; font-size: 13px; border: 1px dashed #d1d5db; border-radius: 8px; padding: 16px; background: #f9fafb; }
+          .transfer-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background: #fff; }
+          .transfer-card.running, .transfer-card.starting, .transfer-card.queued { border-color: #bfdbfe; background: #eff6ff; }
+          .transfer-card.succeeded { border-color: #bbf7d0; background: #f0fdf4; }
+          .transfer-card.failed, .transfer-card.canceled { border-color: #fecaca; background: #fef2f2; }
+          .transfer-card-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
+          .transfer-card-title { font-weight: 600; color: #111827; }
+          .transfer-card-meta { color: #6b7280; font-size: 12px; }
+          .transfer-path { margin-top: 8px; font-size: 13px; color: #1f2937; word-break: break-word; }
+          .transfer-path code { background: rgba(17,24,39,0.06); padding: 2px 4px; border-radius: 4px; }
+          .transfer-progress { margin-top: 10px; height: 8px; border-radius: 999px; background: #dbeafe; overflow: hidden; position: relative; }
+          .transfer-progress-bar { height: 100%; background: #2563eb; border-radius: inherit; width: 0%; transition: width 0.2s ease; }
+          .transfer-progress.indeterminate .transfer-progress-bar { width: 35%; position: absolute; left: -35%; animation: transfer-indeterminate 1.2s ease-in-out infinite; }
+          @keyframes transfer-indeterminate {
+            0% { left: -35%; }
+            100% { left: 100%; }
+          }
+          .transfer-facts { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; color: #374151; font-size: 12px; }
+          .transfer-reason { margin-top: 8px; color: #991b1b; font-size: 12px; }
+          .transfer-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+          .transfer-actions button { border: 1px solid #d1d5db; background: #fff; color: #111827; border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 12px; }
+          .transfer-actions button.primary { background: #111827; color: #fff; border-color: #111827; }
           .pty-panel { margin-top: 24px; background: white; color: #111827; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
           .pty-header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; margin-bottom: 12px; }
           .pty-title { font-size: 16px; font-weight: 600; }
@@ -273,52 +346,138 @@ export class AdminController {
           .pty-privacy.hidden { display: none; }
           .pty-status { font-size: 13px; color: #374151; }
           .pty-status.error { color: #b91c1c; }
-	          .pty-output { min-height: 220px; max-height: 420px; overflow: auto; background: #030712; color: #e5e7eb; border: 1px solid #1f2937; border-radius: 8px; padding: 12px; }
+.pty-output { min-height: 220px; max-height: 420px; overflow: auto; background: #030712; color: #e5e7eb; border: 1px solid #1f2937; border-radius: 8px; padding: 12px; }
 	          .pty-output.empty { color: #9ca3af; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.45; }
 	          .pty-output.attached { cursor: text; }
-          .pty-output .xterm-viewport { overflow-y: auto !important; }
-          .pty-input-row input[type="text"] { flex: 1 1 280px; }
-          .pty-dim { color: #6b7280; }
-        </style>
-        <link rel="stylesheet" href="/admin/assets/xterm.min.css" />
-      </head>
-      <body>
-        <h1>CC Admin - Devices</h1>
-        <form method="post" action="/admin/logout" class="meta">
-          <input type="hidden" name="csrfToken" value="${csrfToken}" />
-          <button type="submit" style="border:0;background:none;color:#1d4ed8;cursor:pointer;padding:0;">Log out</button>
-        </form>
-        <table>
-          <thead>
-            <tr>
-              <th>Device ID</th>
-              <th>Name</th>
-              <th>Status</th>
-              <th>Last Seen</th>
-            </tr>
-          </thead>
-          <tbody id="devices-tbody">${rows}</tbody>
-        </table>
-        <div id="devices-meta" class="meta">${meta}</div>
-        <div class="polling">Auto-refresh every 5 seconds.</div>
-        <section class="alerts-panel">
-          <div class="alerts-title">Alerts</div>
-          <div id="alerts-content" class="alerts-list"><div class="alert-empty">No active alerts.</div></div>
-        </section>
-        <section class="summary-panel">
-          <div class="summary-title">Current device state</div>
-          <div id="summary-meta" class="summary-meta">Select a device to load the latest persisted runtime summary.</div>
-          <div class="summary-actions">
-            <button id="request-status-snapshot" type="button">Request fresh status snapshot</button>
-            <button id="request-inventory" type="button">Request inventory</button>
-            <button id="request-recent-logs" type="button">Request recent logs</button>
-            <button id="request-restart-openvpn" type="button">Restart OpenVPN</button>
-            <button id="request-restart-boundary-auth" type="button">Restart Boundary auth</button>
-            <button id="request-restart-server-tunnel" type="button">Restart server tunnel</button>
-            <button id="request-restart-server-ssh" type="button">Restart server SSH</button>
-          </div>
-          <div id="summary-content" class="summary-grid"></div>
-        </section>
+           .pty-output .xterm-viewport { overflow-y: auto !important; }
+           .pty-input-row input[type="text"] { flex: 1 1 280px; }
+           .pty-dim { color: #6b7280; }
+           /* Top bar */
+           .topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; background: #111827; color: white; margin: -20px -20px 20px -20px; }
+           .topbar-logo { font-size: 18px; font-weight: 600; cursor: pointer; }
+           .topbar-nav { display: flex; gap: 16px; }
+           .topbar-nav button { background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 14px; padding: 6px 10px; border-radius: 6px; }
+           .topbar-nav button:hover, .topbar-nav button.active { color: white; background: #374151; }
+           .topbar-right { display: flex; align-items: center; gap: 12px; }
+           .topbar-status { font-size: 13px; color: #9ca3af; }
+           .topbar-btn { background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 14px; padding: 8px; border-radius: 6px; position: relative; }
+           .topbar-btn:hover { color: white; background: #374151; }
+           .topbar-badge { position: absolute; top: 2px; right: 2px; background: #dc2626; color: white; font-size: 10px; padding: 2px 5px; border-radius: 10px; min-width: 16px; text-align: center; }
+           .topbar-user { font-size: 13px; color: #9ca3af; }
+           /* Compact devices table */
+           .devices-table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+           .devices-table th { background: #f9fafb; font-size: 12px; font-weight: 600; text-transform: uppercase; color: #6b7280; padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; }
+           .devices-table td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; font-size: 13px; }
+           .devices-table tr:last-child td { border-bottom: none; }
+           .devices-table tr { cursor: pointer; }
+           .devices-table tr:hover td { background: #f9fafb; }
+           .devices-table tr.selected td { background: #ecfdf5; }
+           .devices-table tr.selected td:first-child { border-left: 3px solid #10b981; }
+           .devices-table tr.alert-row td { background: #fef2f2; }
+           .devices-table tr.alert-row.selected td { background: #fee2e2; }
+           .devices-table .device-name { font-weight: 500; color: #111827; }
+           .devices-table .device-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+           .devices-table .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+           .devices-table .status-dot.connected { background: #10b981; }
+           .devices-table .status-dot.disconnected { background: #9ca3af; }
+           .devices-table .status-dot.error { background: #ef4444; }
+           .devices-table .last-seen { color: #6b7280; font-size: 12px; }
+           .devices-table .functions-dots { display: flex; gap: 4px; }
+           .devices-table .fn-dot { width: 6px; height: 6px; border-radius: 50%; background: #d1d5db; }
+           .devices-table .fn-dot.running { background: #10b981; }
+           .devices-table .fn-dot.error { background: #ef4444; }
+           .devices-table .actions-dropdown { position: relative; }
+           .devices-table .actions-btn { border: 1px solid #d1d5db; background: #fff; color: #374151; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+           .devices-table .actions-btn:hover { background: #f9fafb; }
+           .devices-table .actions-menu { display: none; position: absolute; right: 0; top: 100%; background: white; border: 1px solid #e5e7eb; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; min-width: 160px; }
+           .devices-table .actions-menu.open { display: block; }
+           .devices-table .actions-menu button { display: block; width: 100%; border: none; background: none; text-align: left; padding: 10px 14px; font-size: 13px; cursor: pointer; color: #374151; }
+           .devices-table .actions-menu button:hover { background: #f9fafb; }
+           .devices-search { width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; margin-bottom: 12px; box-sizing: border-box; }
+           /* Alerts panel */
+           .alerts-panel-modal { display: none; position: fixed; top: 56px; right: 20px; width: 360px; max-height: 480px; background: white; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.15); z-index: 1000; overflow: hidden; }
+           .alerts-panel-modal.open { display: block; }
+           .alerts-panel-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #e5e7eb; }
+           .alerts-panel-title { font-weight: 600; font-size: 14px; }
+           .alerts-panel-clear { font-size: 12px; color: #6b7280; cursor: pointer; }
+           .alerts-panel-list { max-height: 400px; overflow-y: auto; }
+           .alerts-panel-item { display: flex; gap: 10px; padding: 12px 16px; border-bottom: 1px solid #f3f4f6; cursor: pointer; }
+           .alerts-panel-item:hover { background: #f9fafb; }
+           .alerts-panel-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 6px; }
+           .alerts-panel-dot.critical { background: #dc2626; }
+           .alerts-panel-dot.warning { background: #f59e0b; }
+           .alerts-panel-content { flex: 1; }
+           .alerts-panel-item-title { font-size: 13px; font-weight: 500; }
+           .alerts-panel-item-text { font-size: 12px; color: #6b7280; margin-top: 2px; }
+           .alerts-panel-item-meta { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+           .alerts-empty-panel { padding: 32px; text-align: center; color: #6b7280; font-size: 13px; }
+         </style>
+         <link rel="stylesheet" href="/admin/assets/xterm.min.css" />
+       </head>
+       <body>
+         <div class="topbar">
+           <div class="topbar-logo">SuperControlPanel</div>
+           <div class="topbar-nav">
+             <button class="active" data-page="devices">Devices</button>
+             <button data-page="config">Config</button>
+           </div>
+           <div class="topbar-right">
+             <span class="topbar-status" id="device-summary">-</span>
+             <button class="topbar-btn" id="alerts-btn" title="Alerts">
+               <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.668 6.668 6 8.009 6 9.5v3.658A2.032 2.032 0 013.405 12.595L2 14v5h5l1.405-1.405A2.032 2.032 0 0111 18.841V15a6.002 6.002 0 014-5.659V5a2 2 0 114 0v.341C16.332 6.668 18 8.009 18 9.5v3.658A2.032 2.032 0 0115.405 12.595L14 14.158V17h1zM9 18.841V15a3 3 0 016 0v3.841"></path></svg>
+               <span class="topbar-badge" id="alerts-badge" style="display:none;">0</span>
+             </button>
+             <form method="post" action="/admin/logout">
+               <input type="hidden" name="csrfToken" value="${csrfToken}" />
+               <button type="submit" class="topbar-btn" title="Log out">
+                 <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+               </button>
+             </form>
+           </div>
+         </div>
+         <div class="alerts-panel-modal" id="alerts-panel">
+           <div class="alerts-panel-header">
+             <span class="alerts-panel-title">Alerts</span>
+             <span class="alerts-panel-clear" id="clear-alerts">Clear all</span>
+           </div>
+           <div class="alerts-panel-list" id="alerts-panel-list">
+             <div class="alerts-empty-panel">Loading alerts...</div>
+           </div>
+         </div>
+<h1>CC Admin - Devices</h1>
+         <input type="text" class="devices-search" id="devices-search" placeholder="Search devices..." />
+         <table class="devices-table">
+           <thead>
+             <tr>
+               <th style="width:40px;"></th>
+               <th>Device</th>
+               <th style="width:100px;">Last Seen</th>
+               <th style="width:100px;">Functions</th>
+               <th style="width:100px;"></th>
+             </tr>
+           </thead>
+           <tbody id="devices-tbody"><tr><td colspan="6">Loading...</td></tr></tbody>
+         </table>
+         <div id="devices-meta" class="meta">${meta}</div>
+         <section class="alerts-panel" style="display:none;">
+           <div class="alerts-title">Alerts</div>
+           <div id="alerts-content" class="alerts-list"><div class="alert-empty">No active alerts.</div></div>
+         </section>
+         <section class="summary-panel">
+           <div class="summary-title">Current device state</div>
+           <div id="summary-meta" class="summary-meta">Select a device to load the latest persisted runtime summary.</div>
+           <div class="summary-actions">
+             <button id="request-status-snapshot" type="button">Request fresh status snapshot</button>
+             <button id="request-inventory" type="button">Request inventory</button>
+             <button id="request-recent-logs" type="button">Request recent logs</button>
+             <button id="request-restart-openvpn" type="button">Restart OpenVPN</button>
+             <button id="request-restart-boundary-auth" type="button">Restart Boundary auth</button>
+             <button id="request-restart-server-tunnel" type="button">Restart server tunnel</button>
+             <button id="request-restart-server-ssh" type="button">Restart server SSH</button>
+             <button id="open-remote-browser" type="button">Remote browser</button>
+           </div>
+           <div id="summary-content" class="summary-grid"></div>
+         </section>
         <section class="commands-panel">
           <div class="commands-header">
             <div>
@@ -336,6 +495,20 @@ export class AdminController {
                 <div class="command-empty">Select a command to inspect audit entries.</div>
               </div>
             </div>
+          </div>
+        </section>
+        <section class="transfers-panel">
+          <div class="transfers-header">
+            <div>
+              <div class="transfers-title">File transfer history</div>
+              <div id="transfers-meta" class="transfers-note">Select a device to load recent transfer activity.</div>
+            </div>
+            <div class="summary-actions">
+              <button id="clear-finished-transfers" type="button" disabled>Clear finished</button>
+            </div>
+          </div>
+          <div id="transfers-list" class="transfers-list">
+            <div class="transfer-empty">No device selected.</div>
           </div>
         </section>
         <section class="pty-panel">
@@ -427,6 +600,73 @@ export class AdminController {
             </div>
           </div>
         </div>
+        <div id="remote-browser-backdrop" class="remote-browser-backdrop" aria-hidden="true">
+          <div class="remote-browser-modal" role="dialog" aria-modal="true" aria-labelledby="remote-browser-title">
+            <div>
+              <div id="remote-browser-title" class="remote-browser-title">Remote browser</div>
+              <div id="remote-browser-note" class="remote-browser-note">Browse remote files over CC and choose a path for future upload/download actions.</div>
+            </div>
+            <div class="remote-browser-toolbar">
+              <button id="remote-browser-up" type="button">Up</button>
+              <button id="remote-browser-refresh" type="button">Refresh</button>
+              <button id="remote-browser-open-folder" type="button">Open selected folder</button>
+              <input id="remote-browser-path" type="text" placeholder="/remote/path" />
+              <button id="remote-browser-go" type="button">Go</button>
+            </div>
+            <div id="remote-browser-status" class="remote-browser-status">Choose a server to open the remote browser.</div>
+            <div id="remote-browser-list" class="remote-browser-list"><div class="remote-browser-empty">No remote browser session open.</div></div>
+            <div class="remote-browser-transfer">
+              <div class="remote-browser-transfer-title">Transfer launch</div>
+              <div class="remote-browser-transfer-grid">
+                <div class="remote-browser-transfer-field">
+                  <label for="transfer-local-path">Local path</label>
+                  <input id="transfer-local-path" type="text" placeholder="/local/path or C:\\path\\file" />
+                </div>
+                <div class="remote-browser-transfer-field">
+                  <label for="transfer-remote-path">Remote path</label>
+                  <input id="transfer-remote-path" type="text" placeholder="/remote/path" />
+                </div>
+                <div class="remote-browser-transfer-field">
+                  <label for="transfer-overwrite-policy">If destination exists</label>
+                  <select id="transfer-overwrite-policy">
+                    <option value="prompt">Ask / fail with guidance</option>
+                    <option value="force">Overwrite existing destination</option>
+                    <option value="skip">Skip transfer if destination exists</option>
+                  </select>
+                </div>
+                <div class="remote-browser-transfer-field">
+                  <label for="transfer-rate-limit">Rate limit KB/s</label>
+                  <input id="transfer-rate-limit" type="number" min="1" step="1" placeholder="optional" />
+                </div>
+              </div>
+              <div class="remote-browser-transfer-options">
+                <label><input id="transfer-recursive" type="checkbox" /> Recursive</label>
+                <label><input id="transfer-verify-checksum" type="checkbox" /> Verify checksum</label>
+                <label><input id="transfer-follow-symlinks" type="checkbox" /> Follow symlinks</label>
+                <label><input id="transfer-preserve-mtime" type="checkbox" /> Preserve mtime</label>
+                <label><input id="transfer-preserve-mode" type="checkbox" /> Preserve mode</label>
+              </div>
+              <div class="remote-browser-transfer-buttons">
+                <button id="remote-browser-fill-selected" type="button">Use selected for remote path</button>
+                <button id="remote-browser-fill-current" type="button">Use current folder for remote path</button>
+                <button id="remote-browser-start-upload" type="button" class="primary">Start upload</button>
+                <button id="remote-browser-start-download" type="button">Start download</button>
+              </div>
+              <div class="remote-browser-transfer-hint">You can start a transfer either from the browser selection or by typing paths manually. If the destination already exists, choose how to handle it in “If destination exists”.</div>
+            </div>
+            <div class="remote-browser-actions">
+              <div class="group">
+                <button id="remote-browser-new-folder" type="button">New folder</button>
+                <button id="remote-browser-delete" type="button">Delete selected</button>
+              </div>
+              <div class="group">
+                <button id="remote-browser-use-current" type="button">Use current folder</button>
+                <button id="remote-browser-use-selected" type="button" class="primary">Use selected path</button>
+                <button id="remote-browser-close" type="button">Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
         <section class="logs-panel">
           <div class="logs-toolbar">
             <div>
@@ -459,6 +699,7 @@ export class AdminController {
           let selectedDeviceId = null;
           let stream = null;
           let currentDevices = [];
+          let deviceSummary = {};
           let reconnectTimer = null;
           let streamConnectVersion = 0;
           let isPaused = false;
@@ -467,8 +708,20 @@ export class AdminController {
           let currentAdminApiTokens = [];
           let selectedTunnelRestartServerId = null;
           let serverPickerAction = null;
+          let serverPickerSubmitting = false;
+          let currentBrowserSessionId = null;
+          let currentBrowserServerId = null;
+          let currentBrowserRootPath = null;
+          let currentBrowserCurrentPath = null;
+          let currentBrowserSelectedPath = null;
+          let currentBrowserSelectedEntry = null;
+          let currentBrowserEntries = [];
           let selectedCommandId = null;
           let currentCommands = [];
+          let currentTransfers = [];
+          let transferStream = null;
+          let transferStreamDeviceId = null;
+          let transferStreamConnectVersion = 0;
           let ptySocket = null;
           let currentPtySessions = [];
           let currentPtySessionId = null;
@@ -487,6 +740,22 @@ export class AdminController {
             console.debug('[PTY-debug]', ...args);
           }
 
+          function setTopbarPage(page) {
+            Array.from(document.querySelectorAll('.topbar-nav button[data-page]')).forEach((button) => {
+              button.classList.toggle('active', button.dataset.page === page);
+            });
+          }
+
+          function openConfigView() {
+            setTopbarPage('config');
+            document.getElementById('token-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+
+          function openDevicesView() {
+            setTopbarPage('devices');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+
           function escapeHtml(value) {
             return String(value)
               .replaceAll('&', '&amp;')
@@ -496,26 +765,64 @@ export class AdminController {
               .replaceAll("'", '&#39;');
           }
 
-          function renderRows(devices) {
+function renderRows(devices) {
             if (!devices.length) {
-              return '<tr><td colspan="4" style="text-align:center;color:#868e96;">No devices enrolled</td></tr>';
+              return '<tr><td colspan="6" style="text-align:center;color:#868e96;padding:32px;">No devices enrolled</td></tr>';
             }
-            return devices.map((device) => \`
-              <tr data-device-id="\${escapeHtml(device.id)}" class="\${selectedDeviceId === device.id ? 'selected' : ''} \${device.status === 'disconnected' || isDeviceStale(device) ? 'alert-row' : ''}">
-                <td>\${escapeHtml(device.id)}</td>
-                <td>\${escapeHtml(device.name)}</td>
-                <td><span class="status-\${escapeHtml(device.status)}">\${escapeHtml(device.status)}</span></td>
-                <td>\${escapeHtml(device.lastSeenAt)}</td>
-              </tr>
-            \`).join('');
+            return devices.map((device) => {
+              const isAlert = device.status === 'disconnected' || isDeviceStale(device);
+              const statusClass = isAlert ? 'error' : (device.status === 'connected' ? 'connected' : 'disconnected');
+              const summary = deviceSummary[device.id] || {};
+              const functions = summary.functions || {};
+              const fnDots = ['openvpn-connect', 'boundary-auth', 'server-tunnel', 'server-ssh'].map(fnId => {
+                const fn = functions[fnId];
+                if (!fn) return '<span class="fn-dot"></span>';
+                if (fn.state === 'error') return '<span class="fn-dot error" title="' + fnId + ': error"></span>';
+                if (fn.state === 'running') return '<span class="fn-dot running" title="' + fnId + ': running"></span>';
+                return '<span class="fn-dot"></span>';
+              }).join('');
+              const row = [
+                '<tr data-device-id="' + escapeHtml(device.id) + '" class="' + (selectedDeviceId === device.id ? 'selected' : '') + ' ' + (isAlert ? 'alert-row' : '') + '">',
+                '<td><span class="device-status"><span class="status-dot ' + statusClass + '"></span></span></td>',
+                '<td class="device-name">' + escapeHtml(device.name) + '</td>',
+                '<td class="last-seen">' + formatRelativeTime(device.lastSeenAt) + '</td>',
+                '<td><div class="functions-dots">' + fnDots + '</div></td>',
+                '<td class="actions-dropdown">',
+                '<button class="actions-btn" data-device="' + escapeHtml(device.id) + '">Actions ▼</button>',
+                '<div class="actions-menu" id="actions-' + escapeHtml(device.id) + '">',
+                '<button data-action="view">View details</button>',
+                '<button data-action="snapshot">Request snapshot</button>',
+                '<button data-action="logs">View logs</button>',
+                '<button data-action="config">Config</button>',
+                '</div>',
+                '</td>',
+                '</tr>',
+              ].join('');
+              return row;
+            }).join('');
           }
 
           function renderMeta(devices) {
             const connected = devices.filter((device) => device.status === 'connected').length;
             const retention = retentionSettings
-              ? \` | Retention: \${retentionSettings.maxEventsPerDevice} events/device, \${retentionSettings.maxAgeDays} day(s)\`
+              ? ' | Retention: ' + retentionSettings.maxEventsPerDevice + ' events/device, ' + retentionSettings.maxAgeDays + ' day(s)'
               : '';
-            return \`Total devices: \${devices.length} | Connected: \${connected} | Last updated: \${new Date().toISOString()}\${retention}\`;
+            return 'Total devices: ' + devices.length + ' | Connected: ' + connected + ' | Last updated: ' + new Date().toISOString() + retention;
+          }
+
+          function formatRelativeTime(value) {
+            if (!value) return 'Never';
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return String(value);
+            const diffMs = Date.now() - date.getTime();
+            const diffMins = Math.floor(diffMs / 60000);
+            if (diffMins < 1) return 'just now';
+            if (diffMins < 60) return diffMins + 'm ago';
+            const diffHours = Math.floor(diffMins / 60);
+            if (diffHours < 24) return diffHours + 'h ago';
+            const diffDays = Math.floor(diffHours / 24);
+            if (diffDays < 7) return diffDays + 'd ago';
+            return date.toLocaleDateString();
           }
 
           function formatDateTime(value) {
@@ -524,6 +831,237 @@ export class AdminController {
             }
             const date = new Date(value);
             return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+          }
+
+          function formatBytes(value) {
+            const bytes = Number(value);
+            if (!Number.isFinite(bytes) || bytes < 0) {
+              return '0 B';
+            }
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let unitIndex = 0;
+            let current = bytes;
+            while (current >= 1024 && unitIndex < units.length - 1) {
+              current /= 1024;
+              unitIndex += 1;
+            }
+            return current.toFixed(current >= 10 || unitIndex === 0 ? 0 : 1) + ' ' + units[unitIndex];
+          }
+
+          function formatRate(value) {
+            const bytesPerSecond = Number(value);
+            if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
+              return '-';
+            }
+            return formatBytes(bytesPerSecond) + '/s';
+          }
+
+          function formatEta(value) {
+            const seconds = Number(value);
+            if (!Number.isFinite(seconds) || seconds < 0) {
+              return '-';
+            }
+            if (seconds < 60) {
+              return Math.round(seconds) + 's';
+            }
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = Math.round(seconds % 60);
+            if (minutes < 60) {
+              return minutes + 'm ' + remainingSeconds + 's';
+            }
+            const hours = Math.floor(minutes / 60);
+            const remainingMinutes = minutes % 60;
+            return hours + 'h ' + remainingMinutes + 'm';
+          }
+
+          function formatReasonCode(value) {
+            const code = String(value || '').trim();
+            if (!code) {
+              return 'unknown_error';
+            }
+            return code;
+          }
+
+          function humanizeReasonCode(value) {
+            const code = formatReasonCode(value);
+            switch (code) {
+              case 'tunnel_not_running':
+                return 'Boundary tunnel is not running.';
+              case 'path_not_found':
+                return 'The selected path does not exist.';
+              case 'path_already_exists':
+                return 'The destination path already exists.';
+              case 'overwrite_declined':
+                return 'Overwrite was declined.';
+              case 'invalid_target_path':
+                return 'The target path is invalid.';
+              case 'invalid_source_path':
+                return 'The source path is invalid.';
+              case 'permission_denied':
+                return 'Permission was denied.';
+              case 'rate_limited':
+                return 'The request was rate limited.';
+              case 'checksum_mismatch':
+                return 'Checksum verification failed.';
+              case 'transfer_timeout':
+                return 'The transfer timed out.';
+              case 'resume_not_supported':
+                return 'Resume is not supported for this transfer.';
+              case 'browser_session_closed':
+                return 'The remote browser session is closed.';
+              case 'agent_error':
+                return 'The agent reported an internal error.';
+              default:
+                return code.replaceAll('_', ' ');
+            }
+          }
+
+          function defaultActionHintForReasonCode(value) {
+            const code = formatReasonCode(value);
+            switch (code) {
+              case 'tunnel_not_running':
+                return 'Start the Boundary tunnel on the device, then retry.';
+              case 'path_already_exists':
+                return 'Choose another destination or confirm overwrite with force.';
+              case 'overwrite_declined':
+                return 'Retry with overwrite force or choose a different target path.';
+              case 'rate_limited':
+                return 'Wait briefly, then retry.';
+              case 'browser_session_closed':
+                return 'Reopen the remote browser session and retry.';
+              default:
+                return '';
+            }
+          }
+
+          function parseApiErrorPayload(payload) {
+            if (!payload || typeof payload !== 'object') {
+              return null;
+            }
+            if (payload.type === 'nack' && payload.payload && typeof payload.payload === 'object') {
+              return payload.payload;
+            }
+            if ('payload' in payload && payload.payload && typeof payload.payload === 'object') {
+              return payload.payload;
+            }
+            return payload;
+          }
+
+          function describeApiError(error) {
+            const fallback = {
+              code: 'request_failed',
+              message: error && error.message ? String(error.message) : 'Request failed.',
+              detail: '',
+              retryAfterMs: null,
+              actionHint: '',
+            };
+            if (!error || typeof error !== 'object') {
+              return fallback;
+            }
+            const payload = parseApiErrorPayload(error.payload);
+            const code = formatReasonCode(
+              (payload && (payload.reasonCode || payload.code || payload.error))
+              || error.code
+              || 'request_failed',
+            );
+            const retryAfterMs = payload && payload.retryAfterMs != null ? Number(payload.retryAfterMs) : null;
+            const actionHint = payload && payload.actionHint
+              ? String(payload.actionHint)
+              : defaultActionHintForReasonCode(code);
+            const detail = payload && payload.message
+              ? String(payload.message)
+              : payload && payload.reasonDetail
+                ? String(payload.reasonDetail)
+                : '';
+            const retryText = code === 'rate_limited' && Number.isFinite(retryAfterMs)
+              ? ' Retry after ' + retryAfterMs + 'ms.'
+              : '';
+            const detailText = detail ? ' ' + detail : '';
+            const hintText = actionHint ? ' ' + actionHint : '';
+            return {
+              code,
+              message: humanizeReasonCode(code) + detailText + retryText + hintText,
+              detail,
+              retryAfterMs,
+              actionHint,
+            };
+          }
+
+          async function fetchJsonOrThrow(url, options) {
+            const timeoutMs = options && Number.isFinite(options.timeoutMs) ? Number(options.timeoutMs) : 35_000;
+            const fetchOptions = options ? { ...options } : {};
+            delete fetchOptions.timeoutMs;
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            if (fetchOptions.signal) {
+              fetchOptions.signal.addEventListener('abort', () => controller.abort(), { once: true });
+            }
+            fetchOptions.signal = controller.signal;
+            let response;
+            try {
+              response = await fetch(url, fetchOptions);
+            } catch (error) {
+              clearTimeout(timer);
+              if (error && typeof error === 'object' && 'name' in error && error.name === 'AbortError') {
+                throw describeApiError({
+                  code: 'request_timeout',
+                  message: 'Request timed out after ' + timeoutMs + 'ms',
+                  payload: { timeoutMs },
+                });
+              }
+              throw error;
+            }
+            clearTimeout(timer);
+            const raw = await response.text();
+            let payload = null;
+            if (raw) {
+              try {
+                payload = JSON.parse(raw);
+              } catch (parseError) {
+                payload = null;
+              }
+            }
+            if (!response.ok) {
+              const described = describeApiError({
+                code: payload && typeof payload === 'object' ? payload.code : null,
+                payload,
+                message: raw || response.statusText,
+              });
+              throw described;
+            }
+            return payload;
+          }
+
+          function setTransferRemotePath(value) {
+            document.getElementById('transfer-remote-path').value = value || '';
+          }
+
+          function getTransferRemotePath() {
+            return document.getElementById('transfer-remote-path').value.trim();
+          }
+
+          function getTransferLocalPath() {
+            return document.getElementById('transfer-local-path').value.trim();
+          }
+
+          function getTransferOptions() {
+            const rateLimitRaw = document.getElementById('transfer-rate-limit').value.trim();
+            return {
+              overwritePolicy: document.getElementById('transfer-overwrite-policy').value || 'prompt',
+              recursive: !!document.getElementById('transfer-recursive').checked,
+              verifyChecksum: !!document.getElementById('transfer-verify-checksum').checked,
+              followSymlinks: !!document.getElementById('transfer-follow-symlinks').checked,
+              preserveMtime: !!document.getElementById('transfer-preserve-mtime').checked,
+              preserveMode: !!document.getElementById('transfer-preserve-mode').checked,
+              rateLimitKbps: rateLimitRaw ? Number(rateLimitRaw) : null,
+            };
+          }
+
+          function setTransferOverwritePolicy(value) {
+            const select = document.getElementById('transfer-overwrite-policy');
+            if (select) {
+              select.value = value || 'prompt';
+            }
           }
 
           function renderTokenScopes(scopes) {
@@ -573,7 +1111,21 @@ export class AdminController {
             container.innerHTML =
               '<strong>Store this token now.</strong>' +
               '<div style="margin-bottom:8px;">Label: ' + escapeHtml(payload.label) + ' | Expires: ' + escapeHtml(formatDateTime(payload.expiresAt)) + '</div>' +
-              '<div class="token-secret">' + escapeHtml(payload.token) + '</div>';
+              '<div class="token-secret" id="token-secret-value">' + escapeHtml(payload.token) + '</div>' +
+              '<button type="button" id="copy-token-btn" style="margin-top:8px;padding:6px 12px;background:#374151;color:white;border:none;border-radius:4px;cursor:pointer;">Copy token</button>' +
+              '<span id="copy-token-msg" style="margin-left:8px;color:#059669;font-size:12px;display:none;">Copied!</span>';
+            
+            document.getElementById('copy-token-btn').addEventListener('click', async () => {
+              try {
+                await navigator.clipboard.writeText(payload.token);
+                document.getElementById('copy-token-msg').style.display = 'inline';
+                setTimeout(() => {
+                  document.getElementById('copy-token-msg').style.display = 'none';
+                }, 2000);
+              } catch (e) {
+                console.error('Failed to copy', e);
+              }
+            });
           }
 
           function renderAdminApiTokens(tokens) {
@@ -1370,12 +1922,15 @@ export class AdminController {
             }
 
             for (const item of functions) {
+              const fnId = item.functionId || 'unknown';
+              const state = item.state || 'unknown';
+              const message = item.message || '';
+              const isAlert = isAlertState(state) || isWarningState(state) || isFunctionStale(item);
               cards.push(
-                '<div class="summary-card ' + ((isAlertState(item.state) || isWarningState(item.state) || isFunctionStale(item)) ? 'alert' : '') + '">' +
-                  '<h3>' + escapeHtml(item.functionId || 'unknown') + '</h3>' +
-                  '<div class="summary-state ' + escapeHtml(String(item.state || 'unknown')) + '">' + escapeHtml(String(item.state || 'unknown')) + '</div>' +
-                  '<div>' + escapeHtml(String(item.message || '')) + '</div>' +
-                  '<div class="summary-meta">Observed: ' + escapeHtml(String(item.observedAt || summary.updatedAt || '-')) + '</div>' +
+                '<div class="summary-card ' + (isAlert ? 'alert' : '') + '">' +
+                  '<h3>' + escapeHtml(fnId) + '<span class="summary-state ' + escapeHtml(state) + '">' + escapeHtml(state) + '</span></h3>' +
+                  (message ? '<div class="summary-info">' + escapeHtml(message.substring(0, 60) + (message.length > 60 ? '...' : '')) + '</div>' : '') +
+                  '<div class="summary-info">Observed: ' + escapeHtml(String(item.observedAt || summary.updatedAt || '-').substring(11, 19)) + '</div>' +
                 '</div>'
               );
             }
@@ -1515,6 +2070,374 @@ export class AdminController {
             }
           }
 
+          function refreshCommandsSoon(deviceId, preferredCommandId) {
+            Promise.resolve()
+              .then(() => refreshCommands(deviceId, preferredCommandId))
+              .catch((error) => {
+                console.error('Failed to refresh command history', error);
+              });
+          }
+
+          function summarizeTransfer(record) {
+            const direction = String(record && record.direction || 'transfer');
+            const serverId = record && record.serverId ? String(record.serverId) : '-';
+            const state = String(record && record.state || 'queued');
+            const localPath = record && record.localPath ? String(record.localPath) : '-';
+            const remotePath = record && record.remotePath ? String(record.remotePath) : '-';
+            const percent = Number(record && record.percent);
+            const safePercent = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null;
+            const title = direction === 'upload'
+              ? 'Upload → ' + serverId
+              : 'Download ← ' + serverId;
+            const facts = [
+              'State: ' + state,
+              'Updated: ' + formatDateTime(record && record.updatedAt),
+            ];
+            if (record && record.phase) {
+              facts.push('Phase: ' + String(record.phase));
+            }
+            if (safePercent != null) {
+              facts.push('Progress: ' + safePercent.toFixed(safePercent >= 10 ? 0 : 1) + '%');
+            } else if (record && record.bytesTransferred) {
+              facts.push('Transferred: ' + formatBytes(record.bytesTransferred));
+            }
+            if (record && record.throughputBps) {
+              facts.push('Rate: ' + formatRate(record.throughputBps));
+            }
+            if (record && record.etaSec != null) {
+              facts.push('ETA: ' + formatEta(record.etaSec));
+            }
+            const transferredBytes = record ? Number(record.bytesTransferred || 0) : 0;
+            const hasVisibleProgress = safePercent != null || transferredBytes > 0;
+            let progressLabel;
+            if (safePercent != null) {
+              progressLabel = safePercent.toFixed(safePercent >= 10 ? 0 : 1) + '%';
+            } else if (record && record.bytesTotal) {
+              progressLabel = formatBytes(transferredBytes) + ' / ' + formatBytes(record.bytesTotal);
+            } else if (state === 'running') {
+              progressLabel = 'Live progress...';
+            } else {
+              progressLabel = formatBytes(transferredBytes);
+            }
+            const progressWidth = safePercent != null ? safePercent : 0;
+            const progressClass = !hasVisibleProgress && state === 'running'
+              ? 'transfer-progress indeterminate'
+              : 'transfer-progress';
+            const message = record && record.message ? String(record.message) : '';
+            const reasonCode = record && record.reasonCode ? String(record.reasonCode) : '';
+            const actionHint = defaultActionHintForReasonCode(reasonCode);
+            const reason = reasonCode
+              ? humanizeReasonCode(reasonCode)
+                + (record.reasonDetail ? ' ' + String(record.reasonDetail) : '')
+                + (actionHint ? ' ' + actionHint : '')
+              : '';
+            const actionButtons = [];
+            if (canStopTransfer(record)) {
+              actionButtons.push('<button type="button" data-transfer-action="stop" data-transfer-id="' + escapeHtml(record.transferId) + '">Stop</button>');
+            } else if (canForceRemoveTransfer(record)) {
+              actionButtons.push('<button type="button" data-transfer-action="force-remove" data-transfer-id="' + escapeHtml(record.transferId) + '">Force remove</button>');
+            }
+            if (canResumeTransfer(record)) {
+              actionButtons.push('<button type="button" class="primary" data-transfer-action="resume" data-transfer-id="' + escapeHtml(record.transferId) + '">Resume</button>');
+            }
+            if (canDismissTransfer(record)) {
+              actionButtons.push('<button type="button" data-transfer-action="dismiss" data-transfer-id="' + escapeHtml(record.transferId) + '">Dismiss</button>');
+            }
+            const actions = actionButtons.length
+              ? '<div class="transfer-actions">' + actionButtons.join('') + '</div>'
+              : '';
+            return '<div class="transfer-card ' + escapeHtml(state) + '">' +
+              '<div class="transfer-card-head">' +
+                '<div class="transfer-card-title">' + escapeHtml(title) + '</div>' +
+                '<div class="transfer-card-meta">' + escapeHtml(progressLabel) + '</div>' +
+              '</div>' +
+              '<div class="transfer-path">Local <code>' + escapeHtml(localPath) + '</code></div>' +
+              '<div class="transfer-path">Remote <code>' + escapeHtml(remotePath) + '</code></div>' +
+              '<div class="' + progressClass + '"><div class="transfer-progress-bar" style="width:' + progressWidth + '%;"></div></div>' +
+              '<div class="transfer-facts">' + facts.map((item) => '<span>' + escapeHtml(item) + '</span>').join('') + '</div>' +
+              (message ? '<div class="transfer-card-meta" style="margin-top:8px;">' + escapeHtml(message) + '</div>' : '') +
+              (reason ? '<div class="transfer-reason">' + escapeHtml(reason) + ' <span class="transfer-card-meta">(' + escapeHtml(reasonCode) + ')</span></div>' : '') +
+              actions +
+            '</div>';
+          }
+
+          function updateTransferToolbarState() {
+            const button = document.getElementById('clear-finished-transfers');
+            if (!button) {
+              return;
+            }
+            const hasDismissible = currentTransfers.some((item) => canDismissTransfer(item));
+            button.disabled = !selectedDeviceId || !hasDismissible;
+          }
+
+          function renderTransfers(items) {
+            currentTransfers = Array.isArray(items)
+              ? items.slice().sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime())
+              : [];
+            const meta = document.getElementById('transfers-meta');
+            const list = document.getElementById('transfers-list');
+            if (!selectedDeviceId) {
+              meta.textContent = 'Select a device to load recent transfer activity.';
+              list.innerHTML = '<div class="transfer-empty">No device selected.</div>';
+              return;
+            }
+            meta.textContent = currentTransfers.length
+              ? 'Showing ' + currentTransfers.length + ' recent transfer(s) for ' + selectedDeviceId + '.'
+              : 'No transfer activity recorded yet for ' + selectedDeviceId + '.';
+            list.innerHTML = currentTransfers.length
+              ? currentTransfers.map((item) => summarizeTransfer(item)).join('')
+              : '<div class="transfer-empty">No transfer activity recorded yet for this device.</div>';
+            updateTransferToolbarState();
+          }
+
+          function upsertTransfer(record) {
+            if (!record || !record.transferId) {
+              return;
+            }
+            const next = currentTransfers.filter((item) => item.transferId !== record.transferId);
+            next.unshift(record);
+            renderTransfers(next.slice(0, 50));
+          }
+
+          async function loadTransfers(deviceId) {
+            const params = new URLSearchParams({ deviceId, limit: '50' });
+            return fetchJsonOrThrow('/v1/file-transfers?' + params.toString());
+          }
+
+          async function startTransfer(deviceId, direction, payload) {
+            return fetchJsonOrThrow('/v1/commands', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                csrfToken,
+                deviceId,
+                commandType: direction === 'upload' ? 'start_scp_upload' : 'start_scp_download',
+                payload,
+              }),
+            });
+          }
+
+          function canStopTransfer(record) {
+            const state = String(record && record.state || '');
+            return !!(
+              record
+              && record.transferId
+              && record.sessionId
+              && (state === 'queued' || state === 'starting' || state === 'running')
+            );
+          }
+
+          function canForceRemoveTransfer(record) {
+            const state = String(record && record.state || '');
+            return !!(
+              record
+              && record.transferId
+              && !record.sessionId
+              && (state === 'queued' || state === 'starting' || state === 'running')
+            );
+          }
+
+          function canDismissTransfer(record) {
+            const state = String(record && record.state || '');
+            return !!(
+              record
+              && record.transferId
+              && (state === 'succeeded' || state === 'failed' || state === 'canceled')
+            );
+          }
+
+          function canResumeTransfer(record) {
+            const state = String(record && record.state || '');
+            return !!(
+              record
+              && (state === 'failed' || state === 'canceled')
+              && record.resumeSupported === true
+              && typeof record.resumeToken === 'string'
+              && record.resumeToken.trim()
+              && Number.isFinite(Number(record.resumeOffsetBytes))
+              && Number(record.resumeOffsetBytes) > 0
+              && typeof record.tempPathHint === 'string'
+              && record.tempPathHint.trim()
+              && (record.direction === 'upload' || record.direction === 'download')
+            );
+          }
+
+          function buildResumeTransferPayload(record) {
+            return {
+              transferId: String(record.transferId),
+              serverId: String(record.serverId),
+              browserSessionId: record.browserSessionId ? String(record.browserSessionId) : null,
+              localPath: String(record.localPath || ''),
+              remotePath: String(record.remotePath || ''),
+              recursive: !!record.recursive,
+              overwritePolicy: record.overwritePolicy ? String(record.overwritePolicy) : 'prompt',
+              followSymlinks: !!record.followSymlinks,
+              rateLimitKbps: Number.isFinite(Number(record.rateLimitKbps)) && Number(record.rateLimitKbps) > 0
+                ? Number(record.rateLimitKbps)
+                : null,
+              verifyChecksum: !!record.verifyChecksum,
+              preserveMtime: !!record.preserveMtime,
+              preserveMode: !!record.preserveMode,
+              resumeToken: String(record.resumeToken),
+              resumeOffsetBytes: Number(record.resumeOffsetBytes),
+              tempPathHint: String(record.tempPathHint),
+            };
+          }
+
+          async function stopTransfer(record) {
+            if (!selectedDeviceId) {
+              throw new Error('No device selected.');
+            }
+            if (!canStopTransfer(record)) {
+              throw new Error('Stop is not available for this transfer.');
+            }
+            return fetchJsonOrThrow('/v1/file-transfers/stop', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                csrfToken,
+                deviceId: selectedDeviceId,
+                transferId: String(record.transferId),
+              }),
+            });
+          }
+
+          async function forceRemoveTransfer(record) {
+            if (!selectedDeviceId) {
+              throw new Error('No device selected.');
+            }
+            if (!canForceRemoveTransfer(record)) {
+              throw new Error('Force remove is not available for this transfer.');
+            }
+            return fetchJsonOrThrow('/v1/file-transfers/force-remove', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                csrfToken,
+                deviceId: selectedDeviceId,
+                transferId: String(record.transferId),
+              }),
+            });
+          }
+
+          async function dismissFinishedTransfers() {
+            if (!selectedDeviceId) {
+              throw new Error('No device selected.');
+            }
+            return fetchJsonOrThrow('/v1/file-transfers/dismiss-finished', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                csrfToken,
+                deviceId: selectedDeviceId,
+              }),
+            });
+          }
+
+          async function dismissTransfer(record) {
+            if (!selectedDeviceId) {
+              throw new Error('No device selected.');
+            }
+            if (!canDismissTransfer(record)) {
+              throw new Error('Dismiss is not available for this transfer.');
+            }
+            return fetchJsonOrThrow('/v1/file-transfers/dismiss', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                csrfToken,
+                deviceId: selectedDeviceId,
+                transferId: String(record.transferId),
+              }),
+            });
+          }
+
+          async function resumeTransfer(record) {
+            if (!selectedDeviceId) {
+              throw new Error('No device selected.');
+            }
+            if (!canResumeTransfer(record)) {
+              throw new Error('Resume is not available for this transfer.');
+            }
+            return startTransfer(selectedDeviceId, String(record.direction), buildResumeTransferPayload(record));
+          }
+
+          function closeTransferStream() {
+            transferStreamConnectVersion += 1;
+            if (transferStream) {
+              transferStream.close();
+              transferStream = null;
+            }
+            transferStreamDeviceId = null;
+          }
+
+          async function startTransferStream(deviceId) {
+            if (!deviceId) {
+              closeTransferStream();
+              renderTransfers([]);
+              return;
+            }
+
+            const connectVersion = ++transferStreamConnectVersion;
+            if (transferStream) {
+              transferStream.close();
+              transferStream = null;
+            }
+            transferStreamDeviceId = deviceId;
+            document.getElementById('transfers-meta').textContent = 'Loading transfer history…';
+
+            try {
+              const history = await loadTransfers(deviceId);
+              if (connectVersion !== transferStreamConnectVersion || transferStreamDeviceId !== deviceId) {
+                return;
+              }
+              renderTransfers(Array.isArray(history) ? history : []);
+            } catch (error) {
+              if (connectVersion !== transferStreamConnectVersion || transferStreamDeviceId !== deviceId) {
+                return;
+              }
+              document.getElementById('transfers-meta').textContent = 'Failed to load transfer history.';
+              document.getElementById('transfers-list').innerHTML =
+                '<div class="transfer-empty">Failed to load transfer history.</div>';
+              return;
+            }
+
+            if (connectVersion !== transferStreamConnectVersion || transferStreamDeviceId !== deviceId) {
+              return;
+            }
+
+            transferStream = new EventSource('/v1/file-transfers/stream?' + new URLSearchParams({
+              deviceId,
+              limit: '50',
+            }).toString());
+            transferStream.onopen = () => {
+              if (connectVersion !== transferStreamConnectVersion || transferStreamDeviceId !== deviceId) {
+                return;
+              }
+              document.getElementById('transfers-meta').textContent =
+                currentTransfers.length
+                  ? 'Streaming live transfer updates for ' + deviceId + '.'
+                  : 'Streaming live transfer updates for ' + deviceId + ' (no transfers yet).';
+            };
+            transferStream.addEventListener('file_transfer', (message) => {
+              if (connectVersion !== transferStreamConnectVersion || transferStreamDeviceId !== deviceId) {
+                return;
+              }
+              try {
+                upsertTransfer(JSON.parse(message.data));
+              } catch (error) {
+                console.error('Failed to parse file transfer event', error);
+              }
+            });
+            transferStream.onerror = () => {
+              if (connectVersion !== transferStreamConnectVersion || transferStreamDeviceId !== deviceId) {
+                return;
+              }
+              document.getElementById('transfers-meta').textContent =
+                'Transfer stream disconnected. Reload the device to reconnect.';
+            };
+          }
+
 
           function getInventoryServers() {
             return Array.isArray(selectedSummary && selectedSummary.inventory && selectedSummary.inventory.servers)
@@ -1533,10 +2456,12 @@ export class AdminController {
           function closeServerPicker() {
             selectedTunnelRestartServerId = null;
             serverPickerAction = null;
+            serverPickerSubmitting = false;
             document.getElementById('server-picker-backdrop').classList.remove('open');
             document.getElementById('server-picker-backdrop').setAttribute('aria-hidden', 'true');
             document.getElementById('server-picker-list').innerHTML = '';
             document.getElementById('server-picker-confirm').disabled = true;
+            document.getElementById('server-picker-confirm').textContent = 'Confirm';
           }
 
           function renderServerPickerOptions(servers) {
@@ -1558,12 +2483,14 @@ export class AdminController {
                 '<div class="server-picker-item-meta">Host: ' + host + ' | OS: ' + os + (sshUser ? ' | SSH user: ' + sshUser : '') + '</div>' +
               '</button>';
             }).join('');
-            document.getElementById('server-picker-confirm').disabled = !selectedTunnelRestartServerId;
+            document.getElementById('server-picker-confirm').disabled =
+              !selectedTunnelRestartServerId || serverPickerSubmitting;
           }
 
           function openServerPicker(servers, options) {
             selectedTunnelRestartServerId = null;
             serverPickerAction = options && options.action ? options.action : null;
+            serverPickerSubmitting = false;
             document.getElementById('server-picker-title').textContent = options && options.title ? options.title : 'Restart server action';
             document.getElementById('server-picker-note').textContent = options && options.note ? options.note : 'Choose a server from the selected device inventory.';
             document.getElementById('server-picker-confirm').textContent = options && options.confirmLabel ? options.confirmLabel : 'Restart action';
@@ -1572,13 +2499,220 @@ export class AdminController {
             document.getElementById('server-picker-backdrop').setAttribute('aria-hidden', 'false');
           }
 
+          function setRemoteBrowserStatus(message, isError) {
+            const el = document.getElementById('remote-browser-status');
+            el.textContent = message || '';
+            el.classList.toggle('error', !!isError);
+          }
+
+          function updateRemoteBrowserActionState() {
+            const selected = currentBrowserEntries.find((entry) => entry.path === currentBrowserSelectedPath) || null;
+            currentBrowserSelectedEntry = selected;
+            document.getElementById('remote-browser-open-folder').disabled = !(selected && selected.kind === 'directory');
+            document.getElementById('remote-browser-delete').disabled = !selected;
+            document.getElementById('remote-browser-use-selected').disabled = !selected;
+            document.getElementById('remote-browser-use-current').disabled = !currentBrowserCurrentPath;
+          }
+
+          function renderRemoteBrowserEntries(entries) {
+            currentBrowserEntries = Array.isArray(entries) ? entries : [];
+            const list = document.getElementById('remote-browser-list');
+            document.getElementById('remote-browser-path').value = currentBrowserCurrentPath || '';
+            if (!currentBrowserEntries.length) {
+              list.innerHTML = '<div class="remote-browser-empty">This folder is empty.</div>';
+              updateRemoteBrowserActionState();
+              return;
+            }
+            list.innerHTML = currentBrowserEntries.map((entry) => {
+              const selected = entry.path === currentBrowserSelectedPath;
+              const kind = String(entry.kind || 'other');
+              return '<button type="button" class="remote-browser-item ' + (selected ? 'selected' : '') + '" data-path="' + escapeHtml(entry.path || '') + '" data-kind="' + escapeHtml(kind) + '">' +
+                '<div class="remote-browser-item-name">' + escapeHtml(entry.name || entry.path || '-') + '</div>' +
+                '<div class="remote-browser-item-meta">' + escapeHtml(kind) + ' • ' + escapeHtml(entry.path || '') + '</div>' +
+              '</button>';
+            }).join('');
+            updateRemoteBrowserActionState();
+          }
+
+          async function openRemoteBrowserSession(deviceId, serverId) {
+            return fetchJsonOrThrow('/v1/file-ops/remote-browser/open', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ csrfToken, deviceId, serverId }),
+            });
+          }
+
+          async function listRemoteBrowserChildren(deviceId, browserSessionId, path) {
+            return fetchJsonOrThrow('/v1/file-ops/remote-browser/list', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ csrfToken, deviceId, browserSessionId, path }),
+            });
+          }
+
+          async function createRemoteBrowserDirectory(deviceId, browserSessionId, path) {
+            return fetchJsonOrThrow('/v1/file-ops/remote-browser/mkdir', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ csrfToken, deviceId, browserSessionId, path }),
+            });
+          }
+
+          async function deleteRemoteBrowserPath(deviceId, browserSessionId, path, recursive) {
+            return fetchJsonOrThrow('/v1/file-ops/remote-browser/delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ csrfToken, deviceId, browserSessionId, path, recursive }),
+            });
+          }
+
+          async function closeRemoteBrowserSession(deviceId, browserSessionId) {
+            return fetchJsonOrThrow('/v1/file-ops/remote-browser/close', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ csrfToken, deviceId, browserSessionId }),
+            });
+          }
+
+          async function refreshRemoteBrowser(path) {
+            if (!selectedDeviceId || !currentBrowserSessionId) {
+              return;
+            }
+            const targetPath = (path || currentBrowserCurrentPath || currentBrowserRootPath || '').trim();
+            if (!targetPath) {
+              return;
+            }
+            setRemoteBrowserStatus('Loading ' + targetPath + '…');
+            const payload = await listRemoteBrowserChildren(selectedDeviceId, currentBrowserSessionId, targetPath);
+            currentBrowserCurrentPath = typeof payload.path === 'string' && payload.path ? payload.path : targetPath;
+            currentBrowserSelectedPath = null;
+            currentBrowserSelectedEntry = null;
+            renderRemoteBrowserEntries(Array.isArray(payload.entries) ? payload.entries : []);
+            setRemoteBrowserStatus('Browsing ' + currentBrowserCurrentPath);
+          }
+
+          async function initiateRemoteTransfer(direction) {
+            if (!selectedDeviceId || !currentBrowserServerId) {
+              return;
+            }
+            const localPath = getTransferLocalPath();
+            const remotePath = getTransferRemotePath();
+            if (!localPath) {
+              setRemoteBrowserStatus('Local path is required.', true);
+              return;
+            }
+            if (!remotePath) {
+              setRemoteBrowserStatus('Remote path is required.', true);
+              return;
+            }
+            const options = getTransferOptions();
+            if (options.overwritePolicy === 'prompt' && direction === 'upload' && currentBrowserSelectedEntry && currentBrowserSelectedEntry.kind !== 'directory' && currentBrowserSelectedEntry.path === remotePath) {
+              const confirmed = window.confirm(
+                'The selected remote path already exists. Start upload anyway and let the agent prompt/decline overwrite as needed?',
+              );
+              if (!confirmed) {
+                setRemoteBrowserStatus('Upload canceled before overwrite-sensitive start.', false);
+                return;
+              }
+            }
+            const payload = {
+              serverId: currentBrowserServerId,
+              browserSessionId: currentBrowserSessionId,
+              localPath,
+              remotePath,
+              overwritePolicy: options.overwritePolicy,
+              recursive: options.recursive,
+              verifyChecksum: options.verifyChecksum,
+              followSymlinks: options.followSymlinks,
+              preserveMtime: options.preserveMtime,
+              preserveMode: options.preserveMode,
+              rateLimitKbps: Number.isFinite(options.rateLimitKbps) && options.rateLimitKbps > 0 ? options.rateLimitKbps : null,
+            };
+            try {
+              setRemoteBrowserStatus('Starting ' + direction + ' transfer…');
+              const result = await startTransfer(selectedDeviceId, direction, payload);
+              refreshCommandsSoon(selectedDeviceId, result && result.command && result.command.commandId);
+              const transferId = result && result.command && result.command.payload && result.command.payload.transferId
+                ? String(result.command.payload.transferId)
+                : null;
+              document.getElementById('summary-meta').textContent =
+                'Started ' + direction + ' transfer' + (transferId ? ' ' + transferId : '') + ' at ' + new Date().toISOString();
+              setRemoteBrowserStatus(
+                'Started ' + direction + ' transfer' + (transferId ? ' (' + transferId + ')' : '') + '. Monitor progress in File transfer history.',
+                false,
+              );
+            } catch (error) {
+              const detail = describeApiError(error);
+              if (detail && detail.code === 'path_already_exists') {
+                setTransferOverwritePolicy('force');
+                setRemoteBrowserStatus(
+                  detail.message + ' Switched “If destination exists” to Overwrite existing destination so you can retry immediately, or change it to Skip.',
+                  true,
+                );
+                document.getElementById('transfer-overwrite-policy').focus();
+                return;
+              }
+              setRemoteBrowserStatus(detail.message, true);
+            }
+          }
+
+          async function showRemoteBrowser(serverId) {
+            currentBrowserServerId = serverId;
+            currentBrowserSelectedPath = null;
+            currentBrowserSelectedEntry = null;
+            document.getElementById('remote-browser-backdrop').classList.add('open');
+            document.getElementById('remote-browser-backdrop').setAttribute('aria-hidden', 'false');
+            document.getElementById('remote-browser-list').innerHTML = '<div class="remote-browser-empty">Opening remote browser…</div>';
+            setRemoteBrowserStatus('Opening remote browser…');
+            try {
+              const payload = await openRemoteBrowserSession(selectedDeviceId, serverId);
+              currentBrowserSessionId = typeof payload.browserSessionId === 'string' ? payload.browserSessionId : null;
+              currentBrowserRootPath = typeof payload.rootPath === 'string' ? payload.rootPath : '/';
+              currentBrowserCurrentPath = currentBrowserRootPath;
+              setTransferRemotePath(currentBrowserRootPath || '');
+              await refreshRemoteBrowser(currentBrowserRootPath);
+            } catch (error) {
+              await closeRemoteBrowserModal();
+              throw error;
+            }
+          }
+
+          async function closeRemoteBrowserModal() {
+            const browserSessionId = currentBrowserSessionId;
+            currentBrowserSessionId = null;
+            currentBrowserServerId = null;
+            currentBrowserRootPath = null;
+            currentBrowserCurrentPath = null;
+            currentBrowserSelectedPath = null;
+            currentBrowserSelectedEntry = null;
+            currentBrowserEntries = [];
+            document.getElementById('remote-browser-backdrop').classList.remove('open');
+            document.getElementById('remote-browser-backdrop').setAttribute('aria-hidden', 'true');
+            document.getElementById('remote-browser-list').innerHTML = '<div class="remote-browser-empty">No remote browser session open.</div>';
+            document.getElementById('remote-browser-path').value = '';
+            setTransferRemotePath('');
+            setRemoteBrowserStatus('Choose a server to open the remote browser.');
+            updateRemoteBrowserActionState();
+            if (selectedDeviceId && browserSessionId) {
+              try {
+                await closeRemoteBrowserSession(selectedDeviceId, browserSessionId);
+              } catch (error) {
+                console.error('Failed to close remote browser session', error);
+              }
+            }
+          }
+
           async function loadDeviceSummary(deviceId) {
             const params = new URLSearchParams({ deviceId });
             const response = await fetch('/v1/device-summary?' + params.toString());
             if (!response.ok) {
               throw new Error('Failed to load device summary');
             }
-            return response.json();
+            const summary = await response.json();
+            if (deviceId) {
+              deviceSummary[deviceId] = summary || {};
+            }
+            return summary;
           }
 
           async function requestStatusSnapshot(deviceId) {
@@ -1690,13 +2824,25 @@ export class AdminController {
               }
               const devices = await response.json();
               currentDevices = devices;
-              document.getElementById('devices-tbody').innerHTML = renderRows(devices);
+              const searchFilter = (document.getElementById('devices-search')?.value || '').toLowerCase().trim();
+              const filtered = searchFilter 
+                ? devices.filter(d => d.id.toLowerCase().includes(searchFilter) || (d.name && d.name.toLowerCase().includes(searchFilter)))
+                : devices;
+              document.getElementById('devices-tbody').innerHTML = renderRows(filtered);
               document.getElementById('devices-meta').textContent = renderMeta(devices);
               renderAlerts();
             } catch (error) {
               console.error('Failed to refresh devices', error);
             }
           }
+
+          document.getElementById('devices-search')?.addEventListener('input', () => {
+            const searchFilter = (document.getElementById('devices-search').value || '').toLowerCase().trim();
+            const filtered = searchFilter 
+              ? currentDevices.filter(d => d.id.toLowerCase().includes(searchFilter) || (d.name && d.name.toLowerCase().includes(searchFilter)))
+              : currentDevices;
+            document.getElementById('devices-tbody').innerHTML = renderRows(filtered);
+          });
 
           function appendLog(event) {
             const output = document.getElementById('logs-output');
@@ -1819,6 +2965,7 @@ export class AdminController {
                 const summary = await loadDeviceSummary(deviceId);
                 renderSummary(summary);
                 await refreshCommands(deviceId);
+                await startTransferStream(deviceId);
                 try {
                   await loadPtySessions(deviceId, { preserveSelection: false });
                 } catch (error) {
@@ -1842,6 +2989,8 @@ export class AdminController {
                   return;
                 }
                 renderSummary(null);
+                renderTransfers([]);
+                closeTransferStream();
                 clearPtySelection();
                 output.innerHTML = '<span class="logs-empty">Failed to load telemetry history.</span>';
                 document.getElementById('logs-status').textContent =
@@ -1906,11 +3055,74 @@ export class AdminController {
           }
 
           document.getElementById('devices-tbody').addEventListener('click', (event) => {
+            const actionButton = event.target.closest('.actions-btn');
+            if (actionButton) {
+              event.stopPropagation();
+              const menu = actionButton.parentElement?.querySelector('.actions-menu');
+              const shouldOpen = menu ? !menu.classList.contains('open') : false;
+              Array.from(document.querySelectorAll('.actions-menu.open')).forEach((item) => {
+                item.classList.remove('open');
+              });
+              if (menu && shouldOpen) {
+                menu.classList.add('open');
+              }
+              return;
+            }
+
+            const actionItem = event.target.closest('.actions-menu button[data-action]');
+            if (actionItem) {
+              event.stopPropagation();
+              const menu = actionItem.closest('.actions-menu');
+              const row = actionItem.closest('tr[data-device-id]');
+              const deviceId = row?.dataset.deviceId || null;
+              const action = actionItem.dataset.action || '';
+              if (menu) {
+                menu.classList.remove('open');
+              }
+              if (!deviceId) {
+                return;
+              }
+              if (action === 'view') {
+                startLogStream(deviceId);
+                return;
+              }
+              if (action === 'snapshot') {
+                requestStatusSnapshot(deviceId)
+                  .then((result) => {
+                    document.getElementById('summary-meta').textContent =
+                      'Requested fresh status snapshot at ' + new Date().toISOString();
+                    refreshCommandsSoon(deviceId, result && result.command && result.command.commandId);
+                  })
+                  .catch(() => {
+                    document.getElementById('summary-meta').textContent =
+                      'Failed to request fresh status snapshot.';
+                  });
+                return;
+              }
+              if (action === 'logs') {
+                startLogStream(deviceId);
+                document.getElementById('logs-output')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                return;
+              }
+              if (action === 'config') {
+                openConfigView();
+              }
+              return;
+            }
+
             const row = event.target.closest('tr[data-device-id]');
             if (!row) {
               return;
             }
             startLogStream(row.dataset.deviceId);
+          });
+
+          document.addEventListener('click', (event) => {
+            if (!event.target.closest('.actions-dropdown')) {
+              Array.from(document.querySelectorAll('.actions-menu.open')).forEach((item) => {
+                item.classList.remove('open');
+              });
+            }
           });
 
           document.getElementById('commands-list').addEventListener('click', async (event) => {
@@ -1930,6 +3142,143 @@ export class AdminController {
               renderCommandAudit(command, audit);
             } catch (error) {
               renderCommandAudit(command, []);
+            }
+          });
+
+          document.getElementById('clear-finished-transfers').addEventListener('click', async (event) => {
+            if (!selectedDeviceId) {
+              return;
+            }
+            const dismissibleCount = currentTransfers.filter((item) => canDismissTransfer(item)).length;
+            if (!dismissibleCount) {
+              document.getElementById('transfers-meta').textContent = 'No finished transfers to clear.';
+              updateTransferToolbarState();
+              return;
+            }
+            if (!window.confirm('Clear ' + dismissibleCount + ' finished transfer history item(s)?')) {
+              return;
+            }
+            const button = event.currentTarget;
+            const originalLabel = button.textContent || 'Clear finished';
+            button.disabled = true;
+            button.textContent = 'Clearing…';
+            try {
+              const result = await dismissFinishedTransfers();
+              renderTransfers(currentTransfers.filter((item) => !canDismissTransfer(item)));
+              document.getElementById('transfers-meta').textContent =
+                'Cleared ' + Number(result && result.deletedCount || 0) + ' finished transfer(s) at ' + new Date().toISOString() + '.';
+            } catch (error) {
+              const detail = describeApiError(error);
+              document.getElementById('transfers-meta').textContent =
+                'Failed to clear finished transfers: ' + detail.message;
+            } finally {
+              button.textContent = originalLabel;
+              updateTransferToolbarState();
+            }
+          });
+
+          document.getElementById('transfers-list').addEventListener('click', async (event) => {
+            const button = event.target.closest('[data-transfer-action][data-transfer-id]');
+            if (!button) {
+              return;
+            }
+            const action = button.dataset.transferAction || '';
+            const transferId = button.dataset.transferId || '';
+            const record = currentTransfers.find((item) => item && item.transferId === transferId);
+            if (!record) {
+              document.getElementById('transfers-meta').textContent = 'Transfer not found. Reload transfer history and try again.';
+              return;
+            }
+            if (action === 'force-remove') {
+              if (!canForceRemoveTransfer(record)) {
+                document.getElementById('transfers-meta').textContent = 'Force remove is not available for this transfer.';
+                return;
+              }
+              const confirmed = window.confirm('Force remove this transfer history item? This may not stop work on the agent if it is still running.');
+              if (!confirmed) {
+                return;
+              }
+              const originalLabel = button.textContent || 'Force remove';
+              button.disabled = true;
+              button.textContent = 'Removing…';
+              try {
+                await forceRemoveTransfer(record);
+                renderTransfers(currentTransfers.filter((item) => item && item.transferId !== transferId));
+                document.getElementById('transfers-meta').textContent =
+                  'Force removed transfer ' + transferId + ' at ' + new Date().toISOString() + '.';
+              } catch (error) {
+                const detail = describeApiError(error);
+                document.getElementById('transfers-meta').textContent =
+                  'Failed to force remove transfer ' + transferId + ': ' + detail.message;
+                button.disabled = false;
+                button.textContent = originalLabel;
+              }
+              return;
+            }
+            if (action === 'stop') {
+              if (!canStopTransfer(record)) {
+                document.getElementById('transfers-meta').textContent = 'Stop is not available for this transfer.';
+                return;
+              }
+              const originalLabel = button.textContent || 'Stop';
+              button.disabled = true;
+              button.textContent = 'Stopping…';
+              try {
+                await stopTransfer(record);
+                document.getElementById('transfers-meta').textContent =
+                  'Requested stop for transfer ' + transferId + ' at ' + new Date().toISOString() + '.';
+              } catch (error) {
+                const detail = describeApiError(error);
+                document.getElementById('transfers-meta').textContent =
+                  'Failed to stop transfer ' + transferId + ': ' + detail.message;
+                button.disabled = false;
+                button.textContent = originalLabel;
+              }
+              return;
+            }
+            if (action === 'resume') {
+              if (!canResumeTransfer(record)) {
+                document.getElementById('transfers-meta').textContent = 'Resume is not available for this transfer.';
+                return;
+              }
+              const originalLabel = button.textContent || 'Resume';
+              button.disabled = true;
+              button.textContent = 'Resuming…';
+              try {
+                const result = await resumeTransfer(record);
+                refreshCommandsSoon(selectedDeviceId, result && result.command && result.command.commandId);
+                document.getElementById('transfers-meta').textContent =
+                  'Requested resume for transfer ' + transferId + ' at ' + new Date().toISOString() + '.';
+              } catch (error) {
+                const detail = describeApiError(error);
+                document.getElementById('transfers-meta').textContent =
+                  'Failed to resume transfer ' + transferId + ': ' + detail.message;
+              } finally {
+                button.disabled = false;
+                button.textContent = originalLabel;
+              }
+              return;
+            }
+            if (action === 'dismiss') {
+              if (!canDismissTransfer(record)) {
+                document.getElementById('transfers-meta').textContent = 'Dismiss is not available for this transfer.';
+                return;
+              }
+              const originalLabel = button.textContent || 'Dismiss';
+              button.disabled = true;
+              button.textContent = 'Dismissing…';
+              try {
+                await dismissTransfer(record);
+                renderTransfers(currentTransfers.filter((item) => item && item.transferId !== transferId));
+                document.getElementById('transfers-meta').textContent =
+                  'Dismissed transfer ' + transferId + ' at ' + new Date().toISOString() + '.';
+              } catch (error) {
+                const detail = describeApiError(error);
+                document.getElementById('transfers-meta').textContent =
+                  'Failed to dismiss transfer ' + transferId + ': ' + detail.message;
+                button.disabled = false;
+                button.textContent = originalLabel;
+              }
             }
           });
 
@@ -2116,7 +3465,7 @@ export class AdminController {
               const result = await requestStatusSnapshot(selectedDeviceId);
               document.getElementById('summary-meta').textContent =
                 'Requested fresh status snapshot at ' + new Date().toISOString();
-              await refreshCommands(selectedDeviceId, result && result.command && result.command.commandId);
+              refreshCommandsSoon(selectedDeviceId, result && result.command && result.command.commandId);
             } catch (error) {
               document.getElementById('summary-meta').textContent =
                 'Failed to request fresh status snapshot.';
@@ -2131,7 +3480,7 @@ export class AdminController {
               const result = await requestInventory(selectedDeviceId);
               document.getElementById('summary-meta').textContent =
                 'Requested inventory refresh at ' + new Date().toISOString();
-              await refreshCommands(selectedDeviceId, result && result.command && result.command.commandId);
+              refreshCommandsSoon(selectedDeviceId, result && result.command && result.command.commandId);
             } catch (error) {
               document.getElementById('summary-meta').textContent =
                 'Failed to request inventory refresh.';
@@ -2146,7 +3495,7 @@ export class AdminController {
               const result = await requestRecentLogs(selectedDeviceId);
               document.getElementById('summary-meta').textContent =
                 'Requested recent logs at ' + new Date().toISOString();
-              await refreshCommands(selectedDeviceId, result && result.command && result.command.commandId);
+              refreshCommandsSoon(selectedDeviceId, result && result.command && result.command.commandId);
             } catch (error) {
               document.getElementById('summary-meta').textContent =
                 'Failed to request recent logs.';
@@ -2161,7 +3510,7 @@ export class AdminController {
               const result = await requestRestartOpenvpn(selectedDeviceId);
               document.getElementById('summary-meta').textContent =
                 'Requested OpenVPN restart at ' + new Date().toISOString();
-              await refreshCommands(selectedDeviceId, result && result.command && result.command.commandId);
+              refreshCommandsSoon(selectedDeviceId, result && result.command && result.command.commandId);
             } catch (error) {
               document.getElementById('summary-meta').textContent =
                 'Failed to request OpenVPN restart.';
@@ -2177,7 +3526,7 @@ export class AdminController {
               const result = await requestRestartBoundaryAuth(selectedDeviceId);
               document.getElementById('summary-meta').textContent =
                 'Requested Boundary auth restart at ' + new Date().toISOString();
-              await refreshCommands(selectedDeviceId, result && result.command && result.command.commandId);
+              refreshCommandsSoon(selectedDeviceId, result && result.command && result.command.commandId);
             } catch (error) {
               document.getElementById('summary-meta').textContent =
                 'Failed to request Boundary auth restart.';
@@ -2221,6 +3570,24 @@ export class AdminController {
             });
           });
 
+          document.getElementById('open-remote-browser').addEventListener('click', async () => {
+            if (!selectedDeviceId) {
+              return;
+            }
+            const candidates = getRestartSshCandidates();
+            if (!candidates.length) {
+              document.getElementById('summary-meta').textContent =
+                'No servers available in inventory. Request inventory first.';
+              return;
+            }
+            openServerPicker(candidates, {
+              action: 'open-remote-browser',
+              title: 'Open remote browser',
+              note: 'Choose a server from the selected device inventory to browse remote paths.',
+              confirmLabel: 'Open browser',
+            });
+          });
+
           document.getElementById('server-picker-list').addEventListener('click', (event) => {
             const button = event.target.closest('[data-server-id]');
             if (!button) {
@@ -2230,7 +3597,8 @@ export class AdminController {
             Array.from(document.querySelectorAll('#server-picker-list .server-picker-item')).forEach((item) => {
               item.classList.toggle('selected', item.dataset.serverId === selectedTunnelRestartServerId);
             });
-            document.getElementById('server-picker-confirm').disabled = !selectedTunnelRestartServerId;
+            document.getElementById('server-picker-confirm').disabled =
+              !selectedTunnelRestartServerId || serverPickerSubmitting;
           });
 
           document.getElementById('server-picker-cancel').addEventListener('click', () => {
@@ -2244,28 +3612,225 @@ export class AdminController {
           });
 
           document.getElementById('server-picker-confirm').addEventListener('click', async () => {
-            if (!selectedDeviceId || !selectedTunnelRestartServerId || !serverPickerAction) {
+            if (!selectedDeviceId || !selectedTunnelRestartServerId || !serverPickerAction || serverPickerSubmitting) {
               return;
             }
+            const confirmButton = document.getElementById('server-picker-confirm');
+            const activeAction = serverPickerAction;
+            const originalConfirmLabel = confirmButton.textContent || 'Confirm';
+            serverPickerSubmitting = true;
+            confirmButton.disabled = true;
+            confirmButton.textContent = 'Working…';
             const serverId = selectedTunnelRestartServerId;
             try {
               if (serverPickerAction === 'restart-server-tunnel') {
                 const result = await requestRestartServerTunnel(selectedDeviceId, serverId);
                 document.getElementById('summary-meta').textContent =
                   'Requested server tunnel restart for ' + serverId + ' at ' + new Date().toISOString();
-                await refreshCommands(selectedDeviceId, result && result.command && result.command.commandId);
+                refreshCommandsSoon(selectedDeviceId, result && result.command && result.command.commandId);
               } else if (serverPickerAction === 'restart-server-ssh') {
                 const result = await requestRestartServerSsh(selectedDeviceId, serverId);
                 document.getElementById('summary-meta').textContent =
                   'Requested server SSH restart for ' + serverId + ' at ' + new Date().toISOString();
-                await refreshCommands(selectedDeviceId, result && result.command && result.command.commandId);
+                refreshCommandsSoon(selectedDeviceId, result && result.command && result.command.commandId);
+              } else if (serverPickerAction === 'open-remote-browser') {
+                closeServerPicker();
+                await showRemoteBrowser(serverId);
+                document.getElementById('summary-meta').textContent =
+                  'Opened remote browser for ' + serverId + ' at ' + new Date().toISOString();
+                return;
               }
               closeServerPicker();
             } catch (error) {
+              const detail = describeApiError(error);
               document.getElementById('summary-meta').textContent =
-                serverPickerAction === 'restart-server-ssh'
-                  ? 'Failed to request server SSH restart.'
-                  : 'Failed to request server tunnel restart.';
+                activeAction === 'restart-server-ssh'
+                  ? 'Failed to request server SSH restart. ' + detail.message
+                  : activeAction === 'open-remote-browser'
+                    ? 'Failed to open remote browser. ' + detail.message
+                    : 'Failed to request server tunnel restart. ' + detail.message;
+            } finally {
+              if (serverPickerAction === activeAction) {
+                serverPickerSubmitting = false;
+                confirmButton.disabled = !selectedTunnelRestartServerId;
+                confirmButton.textContent = originalConfirmLabel;
+              }
+            }
+          });
+
+          document.getElementById('remote-browser-list').addEventListener('click', (event) => {
+            const button = event.target.closest('[data-path]');
+            if (!button) {
+              return;
+            }
+            currentBrowserSelectedPath = button.dataset.path || null;
+            Array.from(document.querySelectorAll('#remote-browser-list .remote-browser-item')).forEach((item) => {
+              item.classList.toggle('selected', item.dataset.path === currentBrowserSelectedPath);
+            });
+            updateRemoteBrowserActionState();
+          });
+
+          document.getElementById('remote-browser-list').addEventListener('dblclick', async (event) => {
+            const button = event.target.closest('[data-path][data-kind="directory"]');
+            if (!button || !button.dataset.path) {
+              return;
+            }
+            try {
+              await refreshRemoteBrowser(button.dataset.path);
+            } catch (error) {
+              setRemoteBrowserStatus(describeApiError(error).message, true);
+            }
+          });
+
+          document.getElementById('remote-browser-up').addEventListener('click', async () => {
+            if (!currentBrowserCurrentPath) {
+              return;
+            }
+            const parts = String(currentBrowserCurrentPath).split('/').filter(Boolean);
+            const nextPath = parts.length ? '/' + parts.slice(0, -1).join('/') : (currentBrowserRootPath || '/');
+            try {
+              await refreshRemoteBrowser(nextPath || '/');
+            } catch (error) {
+              setRemoteBrowserStatus(describeApiError(error).message, true);
+            }
+          });
+
+          document.getElementById('remote-browser-refresh').addEventListener('click', async () => {
+            try {
+              await refreshRemoteBrowser();
+            } catch (error) {
+              setRemoteBrowserStatus(describeApiError(error).message, true);
+            }
+          });
+
+          document.getElementById('remote-browser-open-folder').addEventListener('click', async () => {
+            const selected = currentBrowserEntries.find((entry) => entry.path === currentBrowserSelectedPath);
+            if (!selected || selected.kind !== 'directory') {
+              return;
+            }
+            try {
+              await refreshRemoteBrowser(selected.path);
+            } catch (error) {
+              setRemoteBrowserStatus(describeApiError(error).message, true);
+            }
+          });
+
+          document.getElementById('remote-browser-go').addEventListener('click', async () => {
+            const targetPath = document.getElementById('remote-browser-path').value.trim();
+            if (!targetPath) {
+              return;
+            }
+            try {
+              await refreshRemoteBrowser(targetPath);
+            } catch (error) {
+              setRemoteBrowserStatus(describeApiError(error).message, true);
+            }
+          });
+
+          document.getElementById('remote-browser-new-folder').addEventListener('click', async () => {
+            if (!selectedDeviceId || !currentBrowserSessionId || !currentBrowserCurrentPath) {
+              return;
+            }
+            const name = window.prompt('New folder name');
+            if (!name || !name.trim()) {
+              return;
+            }
+            const base = currentBrowserCurrentPath === '/' ? '' : currentBrowserCurrentPath.replace(/\\\/$/, '');
+            const nextPath = (base || '') + '/' + name.trim().replace(/^\\\/+/, '');
+            try {
+              await createRemoteBrowserDirectory(selectedDeviceId, currentBrowserSessionId, nextPath);
+              await refreshRemoteBrowser(currentBrowserCurrentPath);
+              setRemoteBrowserStatus('Created folder ' + nextPath);
+            } catch (error) {
+              setRemoteBrowserStatus(describeApiError(error).message, true);
+            }
+          });
+
+          document.getElementById('remote-browser-delete').addEventListener('click', async () => {
+            if (!selectedDeviceId || !currentBrowserSessionId || !currentBrowserSelectedPath) {
+              return;
+            }
+            const selected = currentBrowserEntries.find((entry) => entry.path === currentBrowserSelectedPath);
+            if (!selected) {
+              return;
+            }
+            const recursive = selected.kind === 'directory';
+            if (!window.confirm('Delete ' + currentBrowserSelectedPath + '?')) {
+              return;
+            }
+            try {
+              await deleteRemoteBrowserPath(selectedDeviceId, currentBrowserSessionId, currentBrowserSelectedPath, recursive);
+              await refreshRemoteBrowser(currentBrowserCurrentPath || currentBrowserRootPath || '/');
+              setRemoteBrowserStatus('Deleted ' + currentBrowserSelectedPath);
+            } catch (error) {
+              setRemoteBrowserStatus(describeApiError(error).message, true);
+            }
+          });
+
+          document.getElementById('remote-browser-use-current').addEventListener('click', () => {
+            if (!currentBrowserCurrentPath) {
+              return;
+            }
+            setTransferRemotePath(currentBrowserCurrentPath);
+            document.getElementById('summary-meta').textContent =
+              'Chosen remote folder: ' + currentBrowserCurrentPath;
+            setRemoteBrowserStatus('Selected current folder for future transfer actions.');
+          });
+
+          document.getElementById('remote-browser-use-selected').addEventListener('click', () => {
+            if (!currentBrowserSelectedPath) {
+              return;
+            }
+            if (currentBrowserSelectedEntry && currentBrowserSelectedEntry.kind !== 'directory') {
+              const confirmed = window.confirm(
+                'The selected path already exists. Future uploads to this exact path may require overwrite confirmation. Use it anyway?',
+              );
+              if (!confirmed) {
+                setRemoteBrowserStatus('Overwrite-sensitive path selection canceled.', false);
+                return;
+              }
+            }
+            setTransferRemotePath(currentBrowserSelectedPath);
+            document.getElementById('summary-meta').textContent =
+              'Chosen remote path: ' + currentBrowserSelectedPath;
+            setRemoteBrowserStatus(
+              currentBrowserSelectedEntry && currentBrowserSelectedEntry.kind !== 'directory'
+                ? 'Selected existing path. Future uploads should confirm overwrite unless force/skip is chosen.'
+                : 'Selected remote path for future transfer actions.',
+            );
+          });
+
+          document.getElementById('remote-browser-fill-selected').addEventListener('click', () => {
+            if (!currentBrowserSelectedPath) {
+              return;
+            }
+            setTransferRemotePath(currentBrowserSelectedPath);
+            setRemoteBrowserStatus('Filled remote path from the current selection.');
+          });
+
+          document.getElementById('remote-browser-fill-current').addEventListener('click', () => {
+            if (!currentBrowserCurrentPath) {
+              return;
+            }
+            setTransferRemotePath(currentBrowserCurrentPath);
+            setRemoteBrowserStatus('Filled remote path from the current folder.');
+          });
+
+          document.getElementById('remote-browser-start-upload').addEventListener('click', async () => {
+            await initiateRemoteTransfer('upload');
+          });
+
+          document.getElementById('remote-browser-start-download').addEventListener('click', async () => {
+            await initiateRemoteTransfer('download');
+          });
+
+          document.getElementById('remote-browser-close').addEventListener('click', async () => {
+            await closeRemoteBrowserModal();
+          });
+
+          document.getElementById('remote-browser-backdrop').addEventListener('click', async (event) => {
+            if (event.target.id === 'remote-browser-backdrop') {
+              await closeRemoteBrowserModal();
             }
           });
 
@@ -2300,6 +3865,16 @@ export class AdminController {
             }
           });
 
+          document.querySelector('.topbar-logo')?.addEventListener('click', () => {
+            openDevicesView();
+          });
+          document.querySelector('.topbar-nav button[data-page="devices"]')?.addEventListener('click', () => {
+            openDevicesView();
+          });
+          document.querySelector('.topbar-nav button[data-page="config"]')?.addEventListener('click', () => {
+            openConfigView();
+          });
+
           document.getElementById('tokens-tbody').addEventListener('click', async (event) => {
             const button = event.target.closest('button[data-token-id]');
             if (!button || button.disabled) {
@@ -2316,6 +3891,84 @@ export class AdminController {
           window.setInterval(refreshDevices, 5000);
           window.setInterval(refreshRetentionSettings, 30000);
           window.setInterval(refreshAdminApiTokens, 30000);
+          window.setInterval(refreshAlerts, 30000);
+
+          const alertsBtn = document.getElementById('alerts-btn');
+          const alertsPanel = document.getElementById('alerts-panel');
+          const alertsBadge = document.getElementById('alerts-badge');
+          const alertsPanelList = document.getElementById('alerts-panel-list');
+          const alertsDeviceSummary = document.getElementById('device-summary');
+
+          let dismissedAlertIds = new Set(JSON.parse(localStorage.getItem('dismissedAlerts') || '[]'));
+
+          async function refreshAlerts() {
+            try {
+              const resp = await fetch('/admin/v1/alerts', { credentials: 'same-origin' });
+              if (!resp.ok) return;
+              const data = await resp.json();
+              const alerts = (data.alerts || []).filter(a => !dismissedAlertIds.has(a.id));
+              
+              alertsBadge.textContent = alerts.length;
+              alertsBadge.style.display = alerts.length > 0 ? 'block' : 'none';
+              
+              const connected = currentDevices.filter(d => d.status === 'connected').length;
+              const errors = alerts.filter(a => a.severity === 'critical').length;
+              alertsDeviceSummary.textContent = errors > 0 
+                ? '\u{1F534} ' + errors + ' ' + (errors === 1 ? 'error' : 'errors') + ', ' + connected + ' connected'
+                : '\u{1F7E2} ' + connected + ' connected';
+              
+              if (alerts.length === 0) {
+                alertsPanelList.innerHTML = '<div class="alerts-empty-panel">No active alerts.</div>';
+                return;
+              }
+              alertsPanelList.innerHTML = alerts.map(a => {
+                return '<div class="alerts-panel-item" data-id="' + a.id + '">' +
+                  '<div class="alerts-panel-dot ' + a.severity + '"></div>' +
+                  '<div class="alerts-panel-content">' +
+                    '<div class="alerts-panel-item-title">' + escapeHtml(a.title) + '</div>' +
+                    '<div class="alerts-panel-item-text">' + escapeHtml(a.text) + '</div>' +
+                    '<div class="alerts-panel-item-meta">' + escapeHtml(a.deviceId) + ' · ' + formatDateTime(a.ts) + '</div>' +
+                  '</div>' +
+                '</div>';
+              }).join('');
+              
+              alertsPanelList.querySelectorAll('.alerts-panel-item').forEach(item => {
+                item.addEventListener('click', () => {
+                  const id = item.dataset.id;
+                  dismissedAlertIds.add(id);
+                  localStorage.setItem('dismissedAlerts', JSON.stringify([...dismissedAlertIds]));
+                  item.remove();
+                  const remaining = alertsPanelList.querySelectorAll('.alerts-panel-item').length;
+                  alertsBadge.textContent = remaining;
+                  alertsBadge.style.display = remaining > 0 ? 'block' : 'none';
+                  if (remaining === 0) {
+                    alertsPanelList.innerHTML = '<div class="alerts-empty-panel">No active alerts.</div>';
+                  }
+                });
+              });
+            } catch (e) {
+              console.error('Failed to load alerts', e);
+            }
+          }
+
+          document.getElementById('clear-alerts')?.addEventListener('click', () => {
+            dismissedAlertIds = new Set();
+            localStorage.removeItem('dismissedAlerts');
+            refreshAlerts();
+          });
+
+          alertsBtn?.addEventListener('click', (e) => {
+            e.preventDefault();
+            alertsPanel.classList.toggle('open');
+          });
+
+          document.addEventListener('click', (e) => {
+            if (!alertsPanel.contains(e.target) && e.target !== alertsBtn) {
+              alertsPanel.classList.remove('open');
+            }
+          });
+
+          refreshAlerts();
           window.addEventListener('beforeunload', () => {
             if (ptySocket && ptySocket.readyState === WebSocket.OPEN) {
               const session = getSelectedPtySession();
@@ -2350,6 +4003,83 @@ export class AdminController {
       lastUsedAt: token.lastUsedAt ? new Date(token.lastUsedAt).toISOString() : null,
       revokedAt: token.revokedAt ? new Date(token.revokedAt).toISOString() : null,
     }));
+  }
+
+  @Get('v1/alerts')
+  getAlerts(@Headers('cookie') cookie?: string) {
+    requireAdminSessionAuthorized(cookie, this.adminSessions);
+    const alerts: Array<{
+      id: string;
+      severity: string;
+      title: string;
+      text: string;
+      deviceId: string;
+      ts: string;
+    }> = [];
+
+    const devices = this.deviceStore.getAllDevices();
+    const now = Date.now();
+    const staleMs = 5 * 60 * 1000;
+
+    for (const device of devices) {
+      if (device.status === 'disconnected') {
+        alerts.push({
+          id: `disconnected-${device.id}`,
+          severity: 'critical',
+          title: 'Device disconnected',
+          text: `${device.id} has not sent a heartbeat in over 5 minutes`,
+          deviceId: device.id,
+          ts: device.lastSeenAt || new Date().toISOString(),
+        });
+      } else if (device.lastSeenAt) {
+        const lastSeenMs = new Date(device.lastSeenAt).getTime();
+        if (now - lastSeenMs > staleMs) {
+          alerts.push({
+            id: `stale-${device.id}`,
+            severity: 'warning',
+            title: 'Device may be stale',
+            text: `${device.id} last seen ${Math.round((now - lastSeenMs) / 60000)} minutes ago`,
+            deviceId: device.id,
+            ts: device.lastSeenAt,
+          });
+        }
+      }
+    }
+
+    const runtimeSummaries = this.logStore.getAllRuntimeSummaries();
+    for (const summary of runtimeSummaries) {
+      for (const [functionId, fn] of Object.entries(summary.functions || {})) {
+        if (fn.state === 'error') {
+          alerts.push({
+            id: `function-error-${summary.deviceId}-${functionId}`,
+            severity: fn.state === 'error' ? 'critical' : 'warning',
+            title: `Function error: ${functionId}`,
+            text: fn.message || `${functionId} is in error state`,
+            deviceId: summary.deviceId,
+            ts: fn.observedAt || new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    const transfers = this.fileTransferStore.listActive();
+    for (const transfer of transfers) {
+      if (transfer.state === 'failed') {
+        alerts.push({
+          id: `transfer-failed-${transfer.transferId}`,
+          severity: 'critical',
+          title: `Transfer failed: ${transfer.direction}`,
+          text: transfer.reasonCode || 'Transfer failed',
+          deviceId: transfer.deviceId,
+          ts: transfer.updatedAt || new Date().toISOString(),
+        });
+      }
+    }
+
+    return {
+      alerts: alerts.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()),
+      unreadCount: alerts.length,
+    };
   }
 
   @Post('api-tokens')

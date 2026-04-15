@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import { redactTelemetryPayload } from '../logs/log-redaction';
 
 export type CommandState =
   | 'queued'
@@ -32,7 +33,17 @@ export type SafeCommandType =
   | 'restart_openvpn'
   | 'restart_boundary_auth'
   | 'restart_server_tunnel'
-  | 'restart_server_ssh';
+  | 'restart_server_ssh'
+  | 'open_remote_browser'
+  | 'close_remote_browser'
+  | 'list_remote_browser_children'
+  | 'stat_remote_browser_path'
+  | 'create_remote_browser_directory'
+  | 'delete_remote_browser_path'
+  | 'scp_upload'
+  | 'scp_download'
+  | 'start_scp_upload'
+  | 'start_scp_download';
 
 export interface CommandRecord {
   id: string;
@@ -70,7 +81,7 @@ export interface CreateCommandInput {
   id: string;
   commandId: string;
   deviceId: string;
-  commandType: SafeCommandType;
+  commandType: SafeCommandType | string;
   actorType: CommandActorType;
   actorId?: string | null;
   payload?: unknown;
@@ -113,7 +124,7 @@ export class CommandStore {
         commandType: input.commandType,
         actorType: input.actorType,
         actorId: input.actorId ?? null,
-        payloadJson: input.payload == null ? null : JSON.stringify(input.payload),
+        payloadJson: input.payload == null ? null : JSON.stringify(redactTelemetryPayload(input.payload)),
         payloadSummary: input.payloadSummary ?? null,
         submittedAt: input.submittedAt,
       });
@@ -250,7 +261,7 @@ export class CommandStore {
         actorId: entry.actorId ?? null,
         source: entry.source,
         summary: entry.summary,
-        detailsJson: entry.details == null ? null : JSON.stringify(entry.details),
+        detailsJson: entry.details == null ? null : JSON.stringify(redactTelemetryPayload(entry.details)),
       });
 
     return this.getAuditById(entry.id)!;
