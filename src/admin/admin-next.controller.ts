@@ -47,11 +47,8 @@ export { resolveAssetsFromManifest };
 export class AdminNextController {
   private readonly assets: AdminNextAssets;
 
-  constructor(
-    private readonly adminSessions: AdminSessionService,
-    private readonly resolveAssets: () => AdminNextAssets = resolveAssetsFromManifest,
-  ) {
-    this.assets = this.resolveAssets();
+  constructor(private readonly adminSessions: AdminSessionService) {
+    this.assets = resolveAssetsFromManifest();
   }
 
   @Get()

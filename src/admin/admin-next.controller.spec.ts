@@ -10,10 +10,7 @@ describe('AdminNextController', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    controller = new AdminNextController(adminSessions, () => ({
-      scriptSrc: '/admin-next/assets/index-hash.js',
-      stylesheets: ['/admin-next/assets/index-hash.css'],
-    }));
+    controller = new AdminNextController(adminSessions);
   });
 
   function createRes() {
@@ -34,9 +31,12 @@ describe('AdminNextController', () => {
     expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
     expect(res.render).toHaveBeenCalledWith('admin-next', expect.objectContaining({
       csrfToken: expect.any(String),
-      scriptSrc: '/admin-next/assets/index-hash.js',
-      stylesheets: ['/admin-next/assets/index-hash.css'],
+      scriptSrc: expect.stringMatching(/^\/admin-next\/(assets\/.*\.js|index\.js)$/),
+      stylesheets: expect.any(Array),
     }));
+
+    const renderPayload = res.render.mock.calls[0][1];
+    expect(renderPayload.scriptSrc).not.toBe('/admin-next/index.js');
   });
 
   it('redirects to login for unauthorized session', () => {
