@@ -1,13 +1,28 @@
 import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { WsAdapter } from '@nestjs/platform-ws';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { join } from 'path';
+import { sep } from 'node:path';
 import { AppModule } from './app.module';
 import { validateAuthConfig } from './config/auth';
+import { CONTENT_SECURITY_POLICY } from './security-headers';
 
 async function bootstrap() {
   validateAuthConfig();
   const port = Number(process.env.PORT) || 3000;
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  app.setViewEngine('ejs');
+  app.setBaseViewsDir(join(__dirname, '..', 'views'));
+  app.useStaticAssets(join(__dirname, '..', 'public'), {
+    setHeaders: (res, path) => {
+      const normalizedPath = path.split(sep).join('/');
+      if (normalizedPath.includes('/public/admin-next/assets/')) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    },
+  });
 
   app.use((req: any, res: any, next: () => void) => {
     const startedAt = Date.now();
@@ -16,10 +31,7 @@ async function bootstrap() {
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
-    res.setHeader(
-      'Content-Security-Policy',
-      "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
-    );
+    res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
 
     res.on('finish', () => {
       const durationMs = Date.now() - startedAt;

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content="<%= csrfToken %>" />
+    <title>Admin Next</title>
+    <% if (Array.isArray(stylesheets)) { stylesheets.forEach((href) => { %>
+      <link rel="stylesheet" href="<%= href %>" />
+    <% }) } %>
+  </head>
+  <body>
+    <div id="root">Admin Next</div>
+    <script type="module" src="<%= scriptSrc %>"></script>
+  </body>
+</html>
