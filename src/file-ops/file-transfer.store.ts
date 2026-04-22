@@ -1,65 +1,36 @@
 import { Injectable } from '@nestjs/common';
 import { Observable, Subject, filter } from 'rxjs';
 import { DatabaseService } from '../database/database.service';
-import { redactTelemetryPayload } from '../logs/log-redaction';
-
-export type FileTransferState =
-  | 'queued'
-  | 'starting'
-  | 'running'
-  | 'succeeded'
-  | 'failed'
-  | 'canceled';
-
-export type FileTransferDirection = 'upload' | 'download';
-
-export interface FileTransferRecord {
-  id: string;
-  transferId: string;
-  deviceId: string;
-  serverId: string;
-  browserSessionId: string | null;
-  sessionId: string | null;
-  actorType: string | null;
-  actorId: string | null;
-  state: FileTransferState;
-  direction: FileTransferDirection;
-  localPath: string | null;
-  remotePath: string | null;
-  recursive: boolean;
-  overwritePolicy: string | null;
-  followSymlinks: boolean;
-  rateLimitKbps: number | null;
-  verifyChecksum: boolean;
-  preserveMtime: boolean;
-  preserveMode: boolean;
-  attempt: number;
-  maxAttempts: number;
-  resumeSupported: boolean;
-  retryScheduled: boolean;
-  resumeToken: string | null;
-  resumeOffsetBytes: number | null;
-  tempPathHint: string | null;
-  progressEventCount: number;
-  firstProgressAt: string | null;
-  lastProgressAt: string | null;
-  finalizeSeen: boolean;
-  bytesTransferred: number;
-  bytesTotal: number | null;
-  percent: number | null;
-  throughputBps: number | null;
-  etaSec: number | null;
-  phase: string | null;
-  reasonCode: string | null;
-  reasonDetail: string | null;
-  message: string | null;
-  commandId: string | null;
-  reqSeq: number | null;
-  startedAt: string | null;
-  finishedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
+import {
+  COUNT_ACTIVE_FILE_TRANSFERS_BY_DEVICE_SQL,
+  COUNT_ACTIVE_FILE_TRANSFERS_SQL,
+  DELETE_FILE_TRANSFER_BY_TRANSFER_ID_SQL,
+  DELETE_FINISHED_FILE_TRANSFERS_BY_DEVICE_SQL,
+  GET_FILE_TRANSFER_BY_TRANSFER_ID_SQL,
+  INSERT_FILE_TRANSFER_SQL,
+  LIST_ACTIVE_FILE_TRANSFERS_SQL,
+  LIST_COMPLETED_FILE_TRANSFERS_BY_DEVICE_SINCE_SQL,
+  LIST_COMPLETED_FILE_TRANSFERS_SINCE_SQL,
+  LIST_FILE_TRANSFERS_BY_DEVICE_SQL,
+  PREPARE_FILE_TRANSFER_RESUME_SQL,
+  SUM_TRANSFERRED_BYTES_SINCE_SQL,
+  UPDATE_FILE_TRANSFER_COMMAND_SQL,
+  UPDATE_FILE_TRANSFER_PROGRESS_SQL,
+  UPDATE_FILE_TRANSFER_SESSION_SQL,
+  UPDATE_FILE_TRANSFER_STATE_SQL,
+} from './file-transfer.queries';
+import {
+  FileTransferDirection,
+  FileTransferRecord,
+  FileTransferState,
+} from './file-transfer.types';
+import { mapFileTransferRow } from './file-transfer.mappers';
+import {
+  isFinishedTransferState,
+  normalizeNullableNonNegativeNumber,
+  normalizePositiveInteger,
+  sanitizeText,
+} from './file-transfer.validators';
 
 @Injectable()
 export class FileTransferStore {
@@ -98,28 +69,7 @@ export class FileTransferStore {
     ts: string;
   }): FileTransferRecord {
     this.databaseService.connection
-      .prepare(
-        `
-          INSERT INTO file_transfers (
-            id, transferId, deviceId, serverId, browserSessionId, sessionId, actorType, actorId,
-            state, direction, localPath, remotePath, recursive, overwritePolicy,
-            followSymlinks, rateLimitKbps, verifyChecksum, preserveMtime, preserveMode,
-            attempt, maxAttempts, resumeSupported, retryScheduled, resumeToken, resumeOffsetBytes, tempPathHint,
-            progressEventCount, firstProgressAt, lastProgressAt, finalizeSeen,
-            bytesTransferred, bytesTotal, percent, throughputBps, etaSec, phase,
-            reasonCode, reasonDetail, message, commandId, reqSeq, createdAt, updatedAt
-          )
-          VALUES (
-            @id, @transferId, @deviceId, @serverId, @browserSessionId, @sessionId, @actorType, @actorId,
-            'queued', @direction, @localPath, @remotePath, @recursive, @overwritePolicy,
-            @followSymlinks, @rateLimitKbps, @verifyChecksum, @preserveMtime, @preserveMode,
-            @attempt, @maxAttempts, @resumeSupported, @retryScheduled, @resumeToken, @resumeOffsetBytes, @tempPathHint,
-            0, NULL, NULL, 0,
-            0, NULL, NULL, NULL, NULL, NULL,
-            NULL, NULL, NULL, @commandId, @reqSeq, @ts, @ts
-          )
-        `,
-      )
+      .prepare(INSERT_FILE_TRANSFER_SQL)
       .run({
         ...input,
         browserSessionId: input.browserSessionId ?? null,
@@ -172,36 +122,7 @@ export class FileTransferStore {
     },
   ): FileTransferRecord {
     this.databaseService.connection
-      .prepare(
-        `
-          UPDATE file_transfers
-          SET state = @state,
-              phase = COALESCE(@phase, phase),
-              reasonCode = @reasonCode,
-              reasonDetail = @reasonDetail,
-              message = COALESCE(@message, message),
-              attempt = COALESCE(@attempt, attempt),
-              maxAttempts = COALESCE(@maxAttempts, maxAttempts),
-              resumeSupported = COALESCE(@resumeSupported, resumeSupported),
-              retryScheduled = COALESCE(@retryScheduled, retryScheduled),
-              resumeToken = COALESCE(@resumeToken, resumeToken),
-              resumeOffsetBytes = COALESCE(@resumeOffsetBytes, resumeOffsetBytes),
-              tempPathHint = COALESCE(@tempPathHint, tempPathHint),
-              finalizeSeen = CASE
-                WHEN @state IN ('queued', 'starting', 'running') THEN 0
-                WHEN @finalizeSeen = 1 THEN 1
-                ELSE finalizeSeen
-              END,
-              startedAt = COALESCE(@startedAt, startedAt, CASE WHEN @state IN ('starting', 'running') THEN @ts ELSE NULL END),
-              finishedAt = CASE
-                WHEN @state IN ('succeeded', 'failed', 'canceled') THEN COALESCE(@finishedAt, @ts)
-                WHEN @state IN ('queued', 'starting', 'running') THEN NULL
-                ELSE finishedAt
-              END,
-              updatedAt = @ts
-          WHERE transferId = @transferId
-        `,
-      )
+      .prepare(UPDATE_FILE_TRANSFER_STATE_SQL)
       .run({
         transferId,
         state,
@@ -247,34 +168,7 @@ export class FileTransferStore {
     },
   ): FileTransferRecord {
     this.databaseService.connection
-      .prepare(
-        `
-          UPDATE file_transfers
-          SET state = CASE WHEN state IN ('queued', 'failed', 'canceled', 'succeeded') THEN 'running' ELSE state END,
-              bytesTransferred = @bytesTransferred,
-              bytesTotal = COALESCE(@bytesTotal, bytesTotal),
-              percent = @percent,
-              throughputBps = @throughputBps,
-              etaSec = @etaSec,
-              phase = COALESCE(@phase, phase),
-              message = COALESCE(@message, message),
-              attempt = COALESCE(@attempt, attempt),
-              maxAttempts = COALESCE(@maxAttempts, maxAttempts),
-              resumeSupported = COALESCE(@resumeSupported, resumeSupported),
-              retryScheduled = COALESCE(@retryScheduled, retryScheduled),
-              resumeToken = COALESCE(@resumeToken, resumeToken),
-              resumeOffsetBytes = COALESCE(@resumeOffsetBytes, resumeOffsetBytes),
-              tempPathHint = COALESCE(@tempPathHint, tempPathHint),
-              progressEventCount = progressEventCount + 1,
-              firstProgressAt = COALESCE(firstProgressAt, @ts),
-              lastProgressAt = @ts,
-              finalizeSeen = CASE WHEN @phase = 'finalize' THEN 1 ELSE finalizeSeen END,
-              startedAt = COALESCE(startedAt, @ts),
-              finishedAt = NULL,
-              updatedAt = @ts
-          WHERE transferId = @transferId
-        `,
-      )
+      .prepare(UPDATE_FILE_TRANSFER_PROGRESS_SQL)
       .run({
         transferId,
         bytesTransferred: progress.bytesTransferred,
@@ -300,14 +194,7 @@ export class FileTransferStore {
 
   attachSession(transferId: string, sessionId: string, ts: string): FileTransferRecord {
     this.databaseService.connection
-      .prepare(
-        `
-          UPDATE file_transfers
-          SET sessionId = @sessionId,
-              updatedAt = @ts
-          WHERE transferId = @transferId
-        `,
-      )
+      .prepare(UPDATE_FILE_TRANSFER_SESSION_SQL)
       .run({ transferId, sessionId, ts });
     const record = this.getRequired(transferId);
     this.stream.next(record);
@@ -316,15 +203,7 @@ export class FileTransferStore {
 
   attachCommand(transferId: string, commandId: string, reqSeq: number | null, ts: string): FileTransferRecord {
     this.databaseService.connection
-      .prepare(
-        `
-          UPDATE file_transfers
-          SET commandId = @commandId,
-              reqSeq = @reqSeq,
-              updatedAt = @ts
-          WHERE transferId = @transferId
-        `,
-      )
+      .prepare(UPDATE_FILE_TRANSFER_COMMAND_SQL)
       .run({ transferId, commandId, reqSeq, ts });
     const record = this.getRequired(transferId);
     this.stream.next(record);
@@ -346,27 +225,7 @@ export class FileTransferStore {
     },
   ): FileTransferRecord {
     this.databaseService.connection
-      .prepare(
-        `
-          UPDATE file_transfers
-          SET state = 'queued',
-              phase = 'precheck',
-              reasonCode = NULL,
-              reasonDetail = NULL,
-              message = COALESCE(@message, message),
-              attempt = COALESCE(@attempt, attempt),
-              maxAttempts = COALESCE(@maxAttempts, maxAttempts),
-              resumeSupported = COALESCE(@resumeSupported, resumeSupported),
-              retryScheduled = COALESCE(@retryScheduled, retryScheduled),
-              resumeToken = COALESCE(@resumeToken, resumeToken),
-              resumeOffsetBytes = COALESCE(@resumeOffsetBytes, resumeOffsetBytes),
-              tempPathHint = COALESCE(@tempPathHint, tempPathHint),
-              finalizeSeen = 0,
-              finishedAt = NULL,
-              updatedAt = @ts
-          WHERE transferId = @transferId
-        `,
-      )
+      .prepare(PREPARE_FILE_TRANSFER_RESUME_SQL)
       .run({
         transferId,
         message: sanitizeText(fields.message ?? null),
@@ -386,13 +245,7 @@ export class FileTransferStore {
 
   deleteFinishedByDevice(deviceId: string): { deletedCount: number } {
     const result = this.databaseService.connection
-      .prepare(
-        `
-          DELETE FROM file_transfers
-          WHERE deviceId = ?
-            AND state IN ('succeeded', 'failed', 'canceled')
-        `,
-      )
+      .prepare(DELETE_FINISHED_FILE_TRANSFERS_BY_DEVICE_SQL)
       .run(deviceId) as { changes?: number };
 
     return { deletedCount: Number(result.changes ?? 0) };
@@ -405,12 +258,7 @@ export class FileTransferStore {
     }
 
     this.databaseService.connection
-      .prepare(
-        `
-          DELETE FROM file_transfers
-          WHERE transferId = ?
-        `,
-      )
+      .prepare(DELETE_FILE_TRANSFER_BY_TRANSFER_ID_SQL)
       .run(transferId);
     return record;
   }
@@ -425,40 +273,21 @@ export class FileTransferStore {
     }
 
     this.databaseService.connection
-      .prepare(
-        `
-          DELETE FROM file_transfers
-          WHERE transferId = ?
-        `,
-      )
+      .prepare(DELETE_FILE_TRANSFER_BY_TRANSFER_ID_SQL)
       .run(transferId);
     return record;
   }
 
   get(transferId: string): FileTransferRecord | undefined {
     const row = this.databaseService.connection
-      .prepare(
-        `
-          SELECT *
-          FROM file_transfers
-          WHERE transferId = ?
-        `,
-      )
+      .prepare(GET_FILE_TRANSFER_BY_TRANSFER_ID_SQL)
       .get(transferId) as Record<string, unknown> | undefined;
     return row ? this.mapRow(row) : undefined;
   }
 
   listByDevice(deviceId: string, limit = 100): FileTransferRecord[] {
     const rows = this.databaseService.connection
-      .prepare(
-        `
-          SELECT *
-          FROM file_transfers
-          WHERE deviceId = ?
-          ORDER BY updatedAt DESC, createdAt DESC
-          LIMIT ?
-        `,
-      )
+      .prepare(LIST_FILE_TRANSFERS_BY_DEVICE_SQL)
       .all(deviceId, limit) as Array<Record<string, unknown>>;
     return rows.map((row) => this.mapRow(row));
   }
@@ -467,83 +296,38 @@ export class FileTransferStore {
     const normalizedDeviceId = typeof deviceId === 'string' ? deviceId.trim() : '';
     const rows = normalizedDeviceId
       ? this.databaseService.connection
-          .prepare(
-            `
-              SELECT *
-              FROM file_transfers
-              WHERE deviceId = ?
-                AND state IN ('succeeded', 'failed', 'canceled')
-                AND COALESCE(finishedAt, updatedAt) >= ?
-              ORDER BY COALESCE(finishedAt, updatedAt) DESC
-            `,
-          )
+          .prepare(LIST_COMPLETED_FILE_TRANSFERS_BY_DEVICE_SINCE_SQL)
           .all(normalizedDeviceId, sinceIso)
       : this.databaseService.connection
-          .prepare(
-            `
-              SELECT *
-              FROM file_transfers
-              WHERE state IN ('succeeded', 'failed', 'canceled')
-                AND COALESCE(finishedAt, updatedAt) >= ?
-              ORDER BY COALESCE(finishedAt, updatedAt) DESC
-            `,
-          )
+          .prepare(LIST_COMPLETED_FILE_TRANSFERS_SINCE_SQL)
           .all(sinceIso);
     return (rows as Array<Record<string, unknown>>).map((row) => this.mapRow(row));
   }
 
   countActiveByDevice(deviceId: string): number {
     const row = this.databaseService.connection
-      .prepare(
-        `
-          SELECT COUNT(*) as count
-          FROM file_transfers
-          WHERE deviceId = ?
-            AND state IN ('queued', 'starting', 'running')
-        `,
-      )
+      .prepare(COUNT_ACTIVE_FILE_TRANSFERS_BY_DEVICE_SQL)
       .get(deviceId) as { count?: number } | undefined;
     return Number(row?.count ?? 0);
   }
 
   listActive(limit = 100): FileTransferRecord[] {
     const rows = this.databaseService.connection
-      .prepare(
-        `
-          SELECT *
-          FROM file_transfers
-          WHERE state IN ('queued', 'starting', 'running', 'failed')
-          ORDER BY updatedAt DESC
-          LIMIT ?
-        `,
-      )
+      .prepare(LIST_ACTIVE_FILE_TRANSFERS_SQL)
       .all(limit) as Array<Record<string, unknown>>;
     return rows.map((row) => this.mapRow(row));
   }
 
   countActive(): number {
     const row = this.databaseService.connection
-      .prepare(
-        `
-          SELECT COUNT(*) as count
-          FROM file_transfers
-          WHERE state IN ('queued', 'starting', 'running')
-        `,
-      )
+      .prepare(COUNT_ACTIVE_FILE_TRANSFERS_SQL)
       .get() as { count?: number } | undefined;
     return Number(row?.count ?? 0);
   }
 
   sumTransferredBytesSince(sinceIso: string): number {
     const row = this.databaseService.connection
-      .prepare(
-        `
-          SELECT COALESCE(SUM(bytesTransferred), 0) as total
-          FROM file_transfers
-          WHERE state IN ('succeeded', 'failed', 'canceled')
-            AND COALESCE(finishedAt, updatedAt) >= ?
-        `,
-      )
+      .prepare(SUM_TRANSFERRED_BYTES_SINCE_SQL)
       .get(sinceIso) as { total?: number } | undefined;
     return Number(row?.total ?? 0);
   }
@@ -563,89 +347,6 @@ export class FileTransferStore {
   }
 
   private mapRow(row: Record<string, unknown>): FileTransferRecord {
-    return {
-      id: String(row.id),
-      transferId: String(row.transferId),
-      deviceId: String(row.deviceId),
-      serverId: String(row.serverId),
-      browserSessionId: nullableString(row.browserSessionId),
-      sessionId: nullableString(row.sessionId),
-      actorType: nullableString(row.actorType),
-      actorId: nullableString(row.actorId),
-      state: String(row.state) as FileTransferState,
-      direction: String(row.direction) as FileTransferDirection,
-      localPath: nullableString(row.localPath),
-      remotePath: nullableString(row.remotePath),
-      recursive: Number(row.recursive ?? 0) === 1,
-      overwritePolicy: nullableString(row.overwritePolicy),
-      followSymlinks: Number(row.followSymlinks ?? 0) === 1,
-      rateLimitKbps: nullableNumber(row.rateLimitKbps),
-      verifyChecksum: Number(row.verifyChecksum ?? 0) === 1,
-      preserveMtime: Number(row.preserveMtime ?? 0) === 1,
-      preserveMode: Number(row.preserveMode ?? 0) === 1,
-      attempt: normalizePositiveInteger(row.attempt, 1),
-      maxAttempts: normalizePositiveInteger(row.maxAttempts, 1),
-      resumeSupported: Number(row.resumeSupported ?? 0) === 1,
-      retryScheduled: Number(row.retryScheduled ?? 0) === 1,
-      resumeToken: nullableString(row.resumeToken),
-      resumeOffsetBytes: nullableNumber(row.resumeOffsetBytes),
-      tempPathHint: nullableString(row.tempPathHint),
-      progressEventCount: normalizeNonNegativeInteger(row.progressEventCount, 0),
-      firstProgressAt: nullableString(row.firstProgressAt),
-      lastProgressAt: nullableString(row.lastProgressAt),
-      finalizeSeen: Number(row.finalizeSeen ?? 0) === 1,
-      bytesTransferred: Number(row.bytesTransferred ?? 0),
-      bytesTotal: nullableNumber(row.bytesTotal),
-      percent: nullableNumber(row.percent),
-      throughputBps: nullableNumber(row.throughputBps),
-      etaSec: nullableNumber(row.etaSec),
-      phase: nullableString(row.phase),
-      reasonCode: nullableString(row.reasonCode),
-      reasonDetail: nullableString(row.reasonDetail),
-      message: nullableString(row.message),
-      commandId: nullableString(row.commandId),
-      reqSeq: nullableNumber(row.reqSeq),
-      startedAt: nullableString(row.startedAt),
-      finishedAt: nullableString(row.finishedAt),
-      createdAt: String(row.createdAt),
-      updatedAt: String(row.updatedAt),
-    };
+    return mapFileTransferRow(row);
   }
-}
-
-function nullableString(value: unknown): string | null {
-  return typeof value === 'string' ? value : null;
-}
-
-function nullableNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function isFinishedTransferState(state: FileTransferState): boolean {
-  return state === 'succeeded' || state === 'failed' || state === 'canceled';
-}
-
-function sanitizeText(value: string | null | undefined): string | null {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  return redactTelemetryPayload(value);
-}
-
-function normalizePositiveInteger(value: unknown, fallback: number): number {
-  const num = typeof value === 'number' ? value : Number(value);
-  return Number.isInteger(num) && num > 0 ? num : fallback;
-}
-
-function normalizeNonNegativeInteger(value: unknown, fallback: number): number {
-  const num = typeof value === 'number' ? value : Number(value);
-  return Number.isInteger(num) && num >= 0 ? num : fallback;
-}
-
-function normalizeNullableNonNegativeNumber(value: unknown): number | null {
-  if (value == null) {
-    return null;
-  }
-  const num = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(num) && num >= 0 ? num : null;
 }

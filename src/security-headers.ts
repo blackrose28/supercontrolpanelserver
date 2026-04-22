@@ -1,0 +1,1 @@
+export const CONTENT_SECURITY_POLICY = "default-src 'self'; connect-src 'self' https://cloudflareinsights.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";

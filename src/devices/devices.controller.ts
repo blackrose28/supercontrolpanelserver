@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Body, Param, HttpException, HttpStatus, Headers } from '@nestjs/common';
 import { DeviceStore } from './device.store';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { getBootstrapToken } from '../config/auth';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { getClientId } from '../rate-limit/client-id';
@@ -33,6 +33,7 @@ export class DevicesController {
       name: d.name,
       lastSeenAt: d.lastSeenAt,
       status: d.status,
+      os: d.os,
     }));
   }
 
@@ -52,6 +53,7 @@ export class DevicesController {
       name: device.name,
       lastSeenAt: device.lastSeenAt,
       status: device.status,
+      os: device.os,
     };
   }
 
@@ -73,8 +75,8 @@ export class DevicesController {
       throw new HttpException('BOOTSTRAP_TOKEN_INVALID', HttpStatus.UNAUTHORIZED);
     }
 
-    const deviceId = uuidv4();
-    const agentToken = uuidv4();
+    const deviceId = randomUUID();
+    const agentToken = randomUUID();
     const deviceName = body.deviceName || `device-${deviceId.substring(0, 8)}`;
 
     const device = this.deviceStore.addDevice({

@@ -16,7 +16,8 @@ import { AdminSessionService } from '../admin/admin-session.service';
 import { AdminApiTokenService } from '../admin/admin-api-token.service';
 import { DeviceStore } from '../devices/device.store';
 import { FileOpSloService } from './file-op-slo.service';
-import { FileTransferRecord, FileTransferStore } from './file-transfer.store';
+import { FileTransferStore } from './file-transfer.store';
+import { FileTransferRecord } from './file-transfer.types';
 import { AgentGateway } from '../agent/agent.gateway';
 
 @Controller('v1')

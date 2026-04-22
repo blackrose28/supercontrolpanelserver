@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 
 @Injectable()
 export class PtyHubService {
@@ -10,7 +10,7 @@ export class PtyHubService {
   private readonly maxScrollbackBytes = 32_000;
 
   registerClient(client: any): string {
-    const clientId = uuidv4();
+    const clientId = randomUUID();
     client.__ptyClientId = clientId;
     this.clientSessions.set(clientId, new Set());
     return clientId;

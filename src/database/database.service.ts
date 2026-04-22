@@ -31,7 +31,8 @@ export class DatabaseService {
         name TEXT NOT NULL,
         lastSeenAt TEXT NOT NULL,
         status TEXT NOT NULL,
-        agentToken TEXT NOT NULL
+        agentToken TEXT NOT NULL,
+        os TEXT
       );
 
       CREATE TABLE IF NOT EXISTS telemetry_logs (
@@ -261,6 +262,13 @@ export class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_remote_browser_sessions_state_updated
         ON remote_browser_sessions(state, updatedAt DESC);
     `);
+
+    const deviceColumns = this.db
+      .prepare(`PRAGMA table_info(devices)`)
+      .all() as Array<{ name?: string }>;
+    if (!deviceColumns.some((column) => column.name === 'os')) {
+      this.db.exec(`ALTER TABLE devices ADD COLUMN os TEXT;`);
+    }
 
     const ptySessionColumns = this.db
       .prepare(`PRAGMA table_info(pty_sessions)`)

@@ -262,9 +262,13 @@ export class RemoteBrowserController {
       commandType: input.commandType,
       payload: input.payload,
       principal,
-    });
-    const reqSeq = typeof response.command?.reqSeq === 'number'
-      ? response.command.reqSeq
+    }) as Record<string, unknown>;
+    const command =
+      response.command && typeof response.command === 'object'
+        ? response.command as Record<string, unknown>
+        : null;
+    const reqSeq = command && typeof command.reqSeq === 'number'
+      ? command.reqSeq
       : null;
     if (reqSeq == null) {
       throw new HttpException(`Missing reqSeq for ${input.commandType}`, HttpStatus.CONFLICT);

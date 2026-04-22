@@ -104,22 +104,7 @@ export class LogStore {
     const clauses = ['deviceId = ?'];
     const params: Array<string | number> = [deviceId];
 
-    if (filterBy.type?.trim()) {
-      clauses.push('type = ?');
-      params.push(filterBy.type.trim());
-    }
-    if (filterBy.functionId?.trim()) {
-      clauses.push('functionId = ?');
-      params.push(filterBy.functionId.trim());
-    }
-    if (filterBy.q?.trim()) {
-      const needle = `%${filterBy.q.trim().toLowerCase()}%`;
-      clauses.push(
-        "(LOWER(type) LIKE ? OR LOWER(COALESCE(functionId, '')) LIKE ? OR LOWER(COALESCE(sessionId, '')) LIKE ? OR LOWER(COALESCE(payloadJson, '')) LIKE ?)",
-      );
-      params.push(needle, needle, needle, needle);
-    }
-
+    this.applyFilterClauses(clauses, params, filterBy);
     params.push(limit);
 
     const rows = this.databaseService.connection
@@ -153,6 +138,120 @@ export class LogStore {
       ts: row.ts,
       payload: this.parsePayload(row.payloadJson),
     }));
+  }
+
+  listAll(
+    limit = 200,
+    filterBy: TelemetryFilter & { deviceId?: string; fromTs?: string; toTs?: string } = {},
+  ): TelemetryEvent[] {
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (filterBy.deviceId?.trim()) {
+      clauses.push('deviceId = ?');
+      params.push(filterBy.deviceId.trim());
+    }
+    if (filterBy.fromTs) {
+      clauses.push("ts >= ?");
+      params.push(filterBy.fromTs);
+    }
+    if (filterBy.toTs) {
+      clauses.push("ts <= ?");
+      params.push(filterBy.toTs);
+    }
+    this.applyFilterClauses(clauses, params, filterBy);
+    params.push(limit);
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+
+    const rows = this.databaseService.connection
+      .prepare(
+        `
+          SELECT id, deviceId, type, sessionId, functionId, seq, ts, payloadJson
+          FROM telemetry_logs
+          ${where}
+          ORDER BY seq DESC, ts DESC
+          LIMIT ?
+        `,
+      )
+      .all(...params) as Array<{
+        id: string;
+        deviceId: string;
+        type: string;
+        sessionId?: string | null;
+        functionId?: string | null;
+        seq: number;
+        ts: string;
+        payloadJson?: string | null;
+      }>;
+
+    return rows.reverse().map((row) => ({
+      id: row.id,
+      deviceId: row.deviceId,
+      type: row.type,
+      sessionId: row.sessionId ?? null,
+      functionId: row.functionId ?? null,
+      seq: row.seq,
+      ts: row.ts,
+      payload: this.parsePayload(row.payloadJson),
+    }));
+  }
+
+  getTelemetryTypeStats(
+    filterBy: TelemetryFilter & { deviceId?: string; fromTs?: string; toTs?: string } = {},
+  ): Array<{ type: string; count: number }> {
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (filterBy.deviceId?.trim()) {
+      clauses.push('deviceId = ?');
+      params.push(filterBy.deviceId.trim());
+    }
+    if (filterBy.fromTs) {
+      clauses.push("ts >= ?");
+      params.push(filterBy.fromTs);
+    }
+    if (filterBy.toTs) {
+      clauses.push("ts <= ?");
+      params.push(filterBy.toTs);
+    }
+    this.applyFilterClauses(clauses, params, filterBy);
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+
+    return this.databaseService.connection
+      .prepare(
+        `
+          SELECT type, COUNT(*) as count
+          FROM telemetry_logs
+          ${where}
+          GROUP BY type
+          ORDER BY count DESC
+        `,
+      )
+      .all(...params) as Array<{ type: string; count: number }>;
+  }
+
+  private applyFilterClauses(
+    clauses: string[],
+    params: Array<string | number>,
+    filterBy: TelemetryFilter,
+  ) {
+    if (filterBy.type?.trim()) {
+      clauses.push('type = ?');
+      params.push(filterBy.type.trim());
+    }
+    if (filterBy.functionId?.trim()) {
+      clauses.push('functionId = ?');
+      params.push(filterBy.functionId.trim());
+    }
+    if (filterBy.q?.trim()) {
+      const needle = `%${filterBy.q.trim().toLowerCase()}%`;
+      clauses.push(
+        "(LOWER(type) LIKE ? OR LOWER(COALESCE(functionId, '')) LIKE ? OR LOWER(COALESCE(sessionId, '')) LIKE ? OR LOWER(COALESCE(payloadJson, '')) LIKE ?)",
+      );
+      params.push(needle, needle, needle, needle);
+    }
   }
 
   streamByDevice(deviceId: string, filterBy: TelemetryFilter = {}): Observable<TelemetryEvent> {

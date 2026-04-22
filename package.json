@@ -8,32 +8,44 @@
     "start": "npm run build && node dist/main.js",
     "dev": "ts-node src/main.ts",
     "watch": "node --watch --require ts-node/register src/main.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "admin-next:dev": "npm --prefix admin-next run dev",
+    "admin-next:test": "npm --prefix admin-next run test",
+    "admin-next:test:coverage": "npm --prefix admin-next run test:coverage",
+    "admin-next:build": "npm --prefix admin-next run build",
+    "test:all": "npm run test && npm run admin-next:test",
+    "test:all:coverage": "npm run test:coverage && npm run admin-next:test:coverage"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@nestjs/common": "^11.1.18",
-    "@nestjs/core": "^11.1.18",
-    "@nestjs/platform-express": "^11.1.18",
-    "@nestjs/platform-ws": "^11.1.18",
-    "@nestjs/websockets": "^11.1.18",
-    "better-sqlite3": "^11.8.1",
-    "dotenv": "^17.4.1",
+    "@nestjs/common": "^11.1.19",
+    "@nestjs/core": "^11.1.19",
+    "@nestjs/platform-express": "^11.1.19",
+    "@nestjs/platform-ws": "^11.1.19",
+    "@nestjs/websockets": "^11.1.19",
+    "@xterm/xterm": "^6.0.0",
+    "better-sqlite3": "^12.9.0",
+    "chart.js": "^4.5.1",
+    "dotenv": "^17.4.2",
+    "ejs": "^5.0.2",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.0",
-    "uuid": "^9.0.0",
-    "ws": "^8.0.0",
-    "xterm": "^5.3.0"
+    "ws": "^8.0.0"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@types/uuid": "^9.0.0",
+    "@nestjs/testing": "^11.1.19",
+    "@types/ejs": "^3.1.5",
+    "@types/node": "^25.6.0",
     "@types/ws": "^8.0.0",
+    "@vitest/coverage-v8": "^4.1.4",
     "playwright": "^1.59.1",
     "rimraf": "^6.1.3",
     "ts-node": "^10.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
   }
 }

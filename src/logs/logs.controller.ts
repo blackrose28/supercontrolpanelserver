@@ -15,7 +15,7 @@ import {
 } from '@nestjs/common';
 import { Observable, concat, from, map } from 'rxjs';
 import { Response } from 'express';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { DeviceStore } from '../devices/device.store';
 import { LogStore, TelemetryEvent, TelemetryFilter } from './log.store';
 import { requireAdminAuthorized } from '../admin/admin-auth';
@@ -76,7 +76,7 @@ export class LogsController {
 
     const accepted = incoming.map((event, index) =>
       this.logStore.append({
-        id: uuidv4(),
+        id: randomUUID(),
         deviceId: device.id,
         type: event.type ?? 'unknown',
         sessionId: event.sessionId ?? null,
@@ -224,15 +224,65 @@ export class LogsController {
     return concat(backlog$, live$);
   }
 
+  @Get('telemetry')
+  queryTelemetry(
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+    @Query('deviceId') deviceId?: string,
+    @Query('type') type?: string,
+    @Query('functionId') functionId?: string,
+    @Query('q') q?: string,
+    @Query('fromTs') fromTs?: string,
+    @Query('toTs') toTs?: string,
+    @Query('limit') limit?: string,
+  ) {
+    requireAdminAuthorized(auth, cookie, this.adminSessions, this.adminApiTokens, [
+      'device:read',
+      'logs:read',
+    ]);
+
+    if (deviceId && !this.deviceStore.getDevice(deviceId)) {
+      throw new HttpException('Device not found', HttpStatus.NOT_FOUND);
+    }
+
+    const resolvedLimit = Math.min(Math.max(Number(limit) || 500, 1), 5000);
+    const filterBy = {
+      ...this.resolveFilter(type, functionId, q),
+      deviceId: deviceId?.trim() || undefined,
+      fromTs: fromTs?.trim() || undefined,
+      toTs: toTs?.trim() || undefined,
+    };
+
+    const events = this.logStore.listAll(resolvedLimit, filterBy);
+    const stats = this.logStore.getTelemetryTypeStats(filterBy);
+
+    return {
+      events,
+      stats,
+      filter: filterBy,
+      count: events.length,
+    };
+  }
+
   private authenticateAgent(auth?: string) {
+    console.log('[AUTH] Authenticating agent request');
     if (!auth || !auth.startsWith('Bearer ')) {
+      console.log('[AUTH] FAILED: Missing or invalid Authorization header');
       throw new UnauthorizedException('Agent auth required');
     }
     const token = auth.slice(7);
+    console.log('[AUTH] Token received:', token.substring(0, 8) + '...' + token.substring(token.length - 4));
     const device = this.deviceStore.findDeviceByAgentToken(token);
     if (!device) {
+      console.log('[AUTH] FAILED: Device not found for token');
+      console.log('[AUTH] Available devices:', this.deviceStore.getAllDevices().map(d => ({
+        id: d.id,
+        name: d.name,
+        tokenPrefix: d.agentToken?.substring(0, 15) + '...'
+      })));
       throw new UnauthorizedException('AGENT_AUTH_FAILED');
     }
+    console.log('[AUTH] SUCCESS: Device authenticated:', device.id, device.name);
     return device;
   }
   private normalizeEvents(body?: LogIngestBody): Array<Partial<TelemetryEvent>> {

@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Headers, HttpException, HttpStatus, Param, Post } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import {
   AdminAuthPrincipal,
   requireAdminAuthorized,
@@ -62,7 +62,7 @@ export class PtyController {
     const deviceId = this.requireDevice(id);
     this.pruneTerminalSessions();
     this.ptySessions.expireDetachedSessions(new Date().toISOString());
-    const normalizedSessionId = String(sessionId || '').trim() || `pty-${uuidv4()}`;
+    const normalizedSessionId = String(sessionId || '').trim() || `pty-${randomUUID()}`;
     const normalizedCols = Number(cols);
     const normalizedRows = Number(rows);
     if (!Number.isInteger(normalizedCols) || normalizedCols < 1 || !Number.isInteger(normalizedRows) || normalizedRows < 1) {
@@ -277,7 +277,7 @@ export class PtyController {
     this.ptyHub.clearScrollback(deleted.sessionId);
     const actor = mapPrincipalToPtyActor(principal);
     this.ptyAudit.append({
-      id: uuidv4(),
+      id: randomUUID(),
       sessionId: deleted.sessionId,
       deviceId: deleted.deviceId,
       ts: new Date().toISOString(),

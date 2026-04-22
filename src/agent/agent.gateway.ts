@@ -6,7 +6,7 @@ import {
 } from '@nestjs/websockets';
 import { Server } from 'ws';
 import { DeviceStore } from '../devices/device.store';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { LogStore } from '../logs/log.store';
 import { CommandRecord, CommandStore } from '../commands/command.store';
 import { redactTelemetryPayload } from '../logs/log-redaction';
@@ -14,7 +14,23 @@ import { PtySessionStore } from '../pty/pty-session.store';
 import { PtyHubService } from '../pty/pty-hub.service';
 import { PtyAuditStore } from '../pty/pty-audit.store';
 import { FileTransferStore } from '../file-ops/file-transfer.store';
-
+import { payloadHasServerId, sendAgentMessage } from './agent-transport';
+import {
+  closePty as closePtyRequest,
+  dispatchFileOpCommand as dispatchFileOpCommandRequest,
+  openPty as openPtyRequest,
+  requestInventory as requestInventoryRequest,
+  requestRecentLogs as requestRecentLogsRequest,
+  requestRestartBoundaryAuth as requestRestartBoundaryAuthRequest,
+  requestRestartOpenvpn as requestRestartOpenvpnRequest,
+  requestRestartServerSsh as requestRestartServerSshRequest,
+  requestRestartServerTunnel as requestRestartServerTunnelRequest,
+  requestStatusSnapshot as requestStatusSnapshotRequest,
+  resizePty as resizePtyRequest,
+  writePty as writePtyRequest,
+} from './agent-request-handler';
+import { handleAgentAck, handleAgentCommandStatus, handleAgentFunctionStatus, handleAgentHeartbeat, handleAgentInventory, handleAgentNack, handleAgentPtyExit, handleAgentPtyOutput, handleAgentRecentLogs, handleAgentStatusSnapshot, handleAgentTransferProgress, handleAgentTransferStatus } from './agent-event-handler';
+import { routeAgentRawMessage } from './agent-message-router';
 @WebSocketGateway({ path: '/agent' })
 export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
@@ -61,7 +77,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     // Create session
-    const sessionId = uuidv4();
+    const sessionId = randomUUID();
     this.deviceStore.addSession({
       id: sessionId,
       deviceId: device.id,
@@ -101,7 +117,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
         );
         for (const record of expired) {
           this.ptyAudit.append({
-            id: uuidv4(),
+            id: randomUUID(),
             sessionId: record.sessionId,
             deviceId: record.deviceId,
             ts: record.expiredAt || new Date().toISOString(),
@@ -118,155 +134,82 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   requestStatusSnapshot(deviceId: string, commandId?: string) {
-    const session = this.deviceStore.getSessionByDeviceId(deviceId);
-    if (!session?.ws) {
-      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
-    }
-
-    const envelope = this.sendMessage(session.ws, {
-      type: 'request_status_snapshot',
-      commandId,
-      payload: null,
-    });
-
-    return {
-      ok: true,
+    return requestStatusSnapshotRequest(
+      {
+        deviceStore: this.deviceStore,
+        sendMessage: this.sendMessage.bind(this),
+      },
       deviceId,
-      reqSeq: envelope.seq,
-      requestedAt: envelope.ts,
-    };
+      commandId,
+    );
   }
 
   requestInventory(deviceId: string, commandId?: string) {
-    const session = this.deviceStore.getSessionByDeviceId(deviceId);
-    if (!session?.ws) {
-      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
-    }
-
-    const envelope = this.sendMessage(session.ws, {
-      type: 'request_inventory',
-      commandId,
-      payload: null,
-    });
-
-    return {
-      ok: true,
+    return requestInventoryRequest(
+      {
+        deviceStore: this.deviceStore,
+        sendMessage: this.sendMessage.bind(this),
+      },
       deviceId,
-      reqSeq: envelope.seq,
-      requestedAt: envelope.ts,
-    };
+      commandId,
+    );
   }
 
   requestRecentLogs(deviceId: string, commandId?: string) {
-    const session = this.deviceStore.getSessionByDeviceId(deviceId);
-    if (!session?.ws) {
-      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
-    }
-
-    const envelope = this.sendMessage(session.ws, {
-      type: 'request_recent_logs',
-      commandId,
-      payload: null,
-    });
-
-    return {
-      ok: true,
+    return requestRecentLogsRequest(
+      {
+        deviceStore: this.deviceStore,
+        sendMessage: this.sendMessage.bind(this),
+      },
       deviceId,
-      reqSeq: envelope.seq,
-      requestedAt: envelope.ts,
-    };
+      commandId,
+    );
   }
 
   requestRestartOpenvpn(deviceId: string, commandId?: string) {
-    const session = this.deviceStore.getSessionByDeviceId(deviceId);
-    if (!session?.ws) {
-      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
-    }
-
-    const envelope = this.sendMessage(session.ws, {
-      type: 'request_restart_openvpn',
-      commandId,
-      payload: null,
-    });
-
-    return {
-      ok: true,
+    return requestRestartOpenvpnRequest(
+      {
+        deviceStore: this.deviceStore,
+        sendMessage: this.sendMessage.bind(this),
+      },
       deviceId,
-      reqSeq: envelope.seq,
-      requestedAt: envelope.ts,
-    };
+      commandId,
+    );
   }
 
   requestRestartBoundaryAuth(deviceId: string, commandId?: string) {
-    const session = this.deviceStore.getSessionByDeviceId(deviceId);
-    if (!session?.ws) {
-      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
-    }
-
-    const envelope = this.sendMessage(session.ws, {
-      type: 'request_restart_boundary_auth',
-      commandId,
-      payload: null,
-    });
-
-    return {
-      ok: true,
+    return requestRestartBoundaryAuthRequest(
+      {
+        deviceStore: this.deviceStore,
+        sendMessage: this.sendMessage.bind(this),
+      },
       deviceId,
-      reqSeq: envelope.seq,
-      requestedAt: envelope.ts,
-    };
+      commandId,
+    );
   }
 
   requestRestartServerTunnel(deviceId: string, serverId: string, commandId?: string) {
-    const session = this.deviceStore.getSessionByDeviceId(deviceId);
-    if (!session?.ws) {
-      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
-    }
-
-    const normalizedServerId = String(serverId || '').trim();
-    if (!normalizedServerId) {
-      return { ok: false, reason: 'SERVER_ID_REQUIRED' };
-    }
-
-    const envelope = this.sendMessage(session.ws, {
-      type: 'request_restart_server_tunnel',
-      commandId,
-      payload: { serverId: normalizedServerId },
-    });
-
-    return {
-      ok: true,
+    return requestRestartServerTunnelRequest(
+      {
+        deviceStore: this.deviceStore,
+        sendMessage: this.sendMessage.bind(this),
+      },
       deviceId,
-      serverId: normalizedServerId,
-      reqSeq: envelope.seq,
-      requestedAt: envelope.ts,
-    };
+      serverId,
+      commandId,
+    );
   }
 
   requestRestartServerSsh(deviceId: string, serverId: string, commandId?: string) {
-    const session = this.deviceStore.getSessionByDeviceId(deviceId);
-    if (!session?.ws) {
-      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
-    }
-
-    const normalizedServerId = String(serverId || '').trim();
-    if (!normalizedServerId) {
-      return { ok: false, reason: 'SERVER_ID_REQUIRED' };
-    }
-
-    const envelope = this.sendMessage(session.ws, {
-      type: 'request_restart_server_ssh',
-      commandId,
-      payload: { serverId: normalizedServerId },
-    });
-
-    return {
-      ok: true,
+    return requestRestartServerSshRequest(
+      {
+        deviceStore: this.deviceStore,
+        sendMessage: this.sendMessage.bind(this),
+      },
       deviceId,
-      serverId: normalizedServerId,
-      reqSeq: envelope.seq,
-      requestedAt: envelope.ts,
-    };
+      serverId,
+      commandId,
+    );
   }
 
   dispatchFileOpCommand(
@@ -275,23 +218,16 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     payload: Record<string, unknown>,
     commandId?: string,
   ) {
-    const session = this.deviceStore.getSessionByDeviceId(deviceId);
-    if (!session?.ws) {
-      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
-    }
-
-    const envelope = this.sendMessage(session.ws, {
-      type,
-      commandId,
-      payload,
-    });
-
-    return {
-      ok: true,
+    return dispatchFileOpCommandRequest(
+      {
+        deviceStore: this.deviceStore,
+        sendMessage: this.sendMessage.bind(this),
+      },
       deviceId,
-      reqSeq: envelope.seq,
-      requestedAt: envelope.ts,
-    };
+      type,
+      payload,
+      commandId,
+    );
   }
 
   awaitReqResponse(deviceId: string, reqSeq: number, timeoutMs = 30_000) {
@@ -322,63 +258,28 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     },
     commandId?: string,
   ) {
-    const session = this.deviceStore.getSessionByDeviceId(deviceId);
-    if (!session?.ws) {
-      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
-    }
-
-    const normalizedSessionId = String(input.sessionId || '').trim();
-    if (!normalizedSessionId) {
-      return { ok: false, reason: 'SESSION_ID_REQUIRED' };
-    }
-
-    this.ptySessionStore.createOpening({
-      id: uuidv4(),
-      sessionId: normalizedSessionId,
-      deviceId,
-      cols: input.cols,
-      rows: input.rows,
-      openedAt: new Date().toISOString(),
-      recordingEnabled: Boolean(input.recording),
-      openedByActorType: input.actorType ?? null,
-      openedByActorId: input.actorId ?? null,
-      attachedActorType: input.actorType ?? null,
-      attachedActorId: input.actorId ?? null,
-    });
-
-    const envelope = this.sendMessage(session.ws, {
-      type: 'open_pty',
-      commandId,
-      payload: {
-        sessionId: normalizedSessionId,
-        cols: input.cols,
-        rows: input.rows,
-        recording: Boolean(input.recording),
+    return openPtyRequest(
+      {
+        deviceStore: this.deviceStore,
+        ptySessionStore: this.ptySessionStore,
+        sendMessage: this.sendMessage.bind(this),
       },
-    });
-    this.ptySessionStore.trackPendingReq(deviceId, envelope.seq, normalizedSessionId, 'open');
-
-    return { ok: true, deviceId, sessionId: normalizedSessionId, reqSeq: envelope.seq, requestedAt: envelope.ts };
+      deviceId,
+      input,
+      commandId,
+    );
   }
 
   writePty(deviceId: string, input: { sessionId: string; data: string }, commandId?: string) {
-    const session = this.deviceStore.getSessionByDeviceId(deviceId);
-    if (!session?.ws) {
-      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
-    }
-    const normalizedSessionId = String(input.sessionId || '').trim();
-    if (!normalizedSessionId) {
-      return { ok: false, reason: 'SESSION_ID_REQUIRED' };
-    }
-    const envelope = this.sendMessage(session.ws, {
-      type: 'write_pty',
-      commandId,
-      payload: {
-        sessionId: normalizedSessionId,
-        data: String(input.data ?? ''),
+    return writePtyRequest(
+      {
+        deviceStore: this.deviceStore,
+        sendMessage: this.sendMessage.bind(this),
       },
-    });
-    return { ok: true, deviceId, sessionId: normalizedSessionId, reqSeq: envelope.seq, requestedAt: envelope.ts };
+      deviceId,
+      input,
+      commandId,
+    );
   }
 
   resizePty(
@@ -386,195 +287,90 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     input: { sessionId: string; cols: number; rows: number },
     commandId?: string,
   ) {
-    const session = this.deviceStore.getSessionByDeviceId(deviceId);
-    if (!session?.ws) {
-      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
-    }
-    const normalizedSessionId = String(input.sessionId || '').trim();
-    if (!normalizedSessionId) {
-      return { ok: false, reason: 'SESSION_ID_REQUIRED' };
-    }
-    const envelope = this.sendMessage(session.ws, {
-      type: 'resize_pty',
-      commandId,
-      payload: {
-        sessionId: normalizedSessionId,
-        cols: input.cols,
-        rows: input.rows,
+    return resizePtyRequest(
+      {
+        deviceStore: this.deviceStore,
+        sendMessage: this.sendMessage.bind(this),
       },
-    });
-    return { ok: true, deviceId, sessionId: normalizedSessionId, reqSeq: envelope.seq, requestedAt: envelope.ts };
+      deviceId,
+      input,
+      commandId,
+    );
   }
 
   closePty(deviceId: string, input: { sessionId: string }, commandId?: string) {
-    const session = this.deviceStore.getSessionByDeviceId(deviceId);
-    if (!session?.ws) {
-      return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
-    }
-    const normalizedSessionId = String(input.sessionId || '').trim();
-    if (!normalizedSessionId) {
-      return { ok: false, reason: 'SESSION_ID_REQUIRED' };
-    }
-    this.ptySessionStore.markClosing(normalizedSessionId, new Date().toISOString());
-
-    const envelope = this.sendMessage(session.ws, {
-      type: 'close_pty',
+    return closePtyRequest(
+      {
+        deviceStore: this.deviceStore,
+        ptySessionStore: this.ptySessionStore,
+        sendMessage: this.sendMessage.bind(this),
+      },
+      deviceId,
+      input,
       commandId,
-      payload: { sessionId: normalizedSessionId },
-    });
-    this.ptySessionStore.trackPendingReq(deviceId, envelope.seq, normalizedSessionId, 'close');
-    return { ok: true, deviceId, sessionId: normalizedSessionId, reqSeq: envelope.seq, requestedAt: envelope.ts };
+    );
   }
 
-  private handleRawMessage(data: string, client: any) {
-    try {
-      const envelope = JSON.parse(data);
-      console.log(`Received from ${client.deviceId}: type=${envelope.type}`);
 
-      switch (envelope.type) {
-        case 'ack':
-          this.handleAck(envelope, client);
-          break;
-        case 'nack':
-          this.handleNack(envelope, client);
-          break;
-        case 'heartbeat':
-          this.handleHeartbeat(envelope, client);
-          break;
-        case 'status_snapshot':
-          this.handleStatusSnapshot(envelope, client);
-          break;
-        case 'inventory':
-          this.handleInventory(envelope, client);
-          break;
-        case 'recent_logs':
-          this.handleRecentLogs(envelope, client);
-          break;
-        case 'command_status':
-          this.handleCommandStatus(envelope, client);
-          break;
-        case 'function-status':
-          this.handleFunctionStatus(envelope, client);
-          break;
-        case 'pty-output':
-          this.handlePtyOutput(envelope, client);
-          break;
-        case 'pty-exit':
-          this.handlePtyExit(envelope, client);
-          break;
-        case 'transfer_progress':
-          this.handleTransferProgress(envelope, client);
-          break;
-        case 'transfer_status':
-          this.handleTransferStatus(envelope, client);
-          break;
-        default:
-          console.log(`Unknown message type: ${envelope.type}`);
-      }
-    } catch (err) {
-      console.error('Error handling message:', err);
-    }
+  private handleRawMessage(data: string, client: any) {
+    routeAgentRawMessage({
+      data,
+      client,
+      handleAck: this.handleAck.bind(this),
+      handleNack: this.handleNack.bind(this),
+      handleHeartbeat: this.handleHeartbeat.bind(this),
+      handleStatusSnapshot: this.handleStatusSnapshot.bind(this),
+      handleInventory: this.handleInventory.bind(this),
+      handleRecentLogs: this.handleRecentLogs.bind(this),
+      handleCommandStatus: this.handleCommandStatus.bind(this),
+      handleFunctionStatus: this.handleFunctionStatus.bind(this),
+      handlePtyOutput: this.handlePtyOutput.bind(this),
+      handlePtyExit: this.handlePtyExit.bind(this),
+      handleTransferProgress: this.handleTransferProgress.bind(this),
+      handleTransferStatus: this.handleTransferStatus.bind(this),
+    });
   }
 
   private handleHeartbeat(envelope: any, client: any) {
-    // Update lastSeenAt
-    this.deviceStore.updateDeviceStatus(client.deviceId, 'connected');
-    
-    // Send ack
-    this.sendMessage(client, {
-      type: 'ack',
-      reqSeq: envelope.seq,
-      payload: { status: 'ok' },
+    handleAgentHeartbeat({
+      envelope,
+      client,
+      deviceStore: this.deviceStore,
+      sendMessage: this.sendMessage.bind(this),
     });
   }
 
   private handleStatusSnapshot(envelope: any, client: any) {
-    console.log(`Status snapshot from ${client.deviceId}:`, redactTelemetryPayload(envelope.payload ?? null));
-
-    this.logStore.append({
-      id: uuidv4(),
-      deviceId: client.deviceId,
-      type: 'status_snapshot',
-      sessionId: client.sessionId ?? null,
-      functionId: null,
-      seq: typeof envelope.seq === 'number' ? envelope.seq : Date.now(),
-      ts: envelope.ts || new Date().toISOString(),
-      payload: envelope.payload ?? null,
+    handleAgentStatusSnapshot({
+      envelope,
+      client,
+      logStore: this.logStore,
+      redactTelemetryPayload,
+      sendMessage: this.sendMessage.bind(this),
+      completeRefreshCommand: this.completeRefreshCommand.bind(this),
     });
-
-    this.sendMessage(client, {
-      type: 'ack',
-      reqSeq: envelope.seq,
-      payload: { status: 'ok' },
-    });
-
-    this.completeRefreshCommand(client.deviceId, 'request_status_snapshot', envelope.ts, 'status snapshot received');
   }
 
   private handleInventory(envelope: any, client: any) {
-    console.log(`Inventory from ${client.deviceId}:`, redactTelemetryPayload(envelope.payload ?? null));
-
-    this.logStore.append({
-      id: uuidv4(),
-      deviceId: client.deviceId,
-      type: 'inventory',
-      sessionId: client.sessionId ?? null,
-      functionId: null,
-      seq: typeof envelope.seq === 'number' ? envelope.seq : Date.now(),
-      ts: envelope.ts || new Date().toISOString(),
-      payload: envelope.payload ?? null,
+    handleAgentInventory({
+      envelope,
+      client,
+      logStore: this.logStore,
+      redactTelemetryPayload,
+      sendMessage: this.sendMessage.bind(this),
+      completeRefreshCommand: this.completeRefreshCommand.bind(this),
     });
-
-    this.sendMessage(client, {
-      type: 'ack',
-      reqSeq: envelope.seq,
-      payload: { status: 'ok' },
-    });
-
-    this.completeRefreshCommand(client.deviceId, 'request_inventory', envelope.ts, 'inventory received');
   }
 
   private handleAck(envelope: any, client: any) {
-    const reqSeq = typeof envelope.reqSeq === 'number' ? envelope.reqSeq : null;
-    if (reqSeq == null) {
-      return;
-    }
-
-    const pendingResponse = this.pendingReqResponses.get(reqSeq);
-    if (pendingResponse && pendingResponse.deviceId === client.deviceId) {
-      clearTimeout(pendingResponse.timer);
-      this.pendingReqResponses.delete(reqSeq);
-      pendingResponse.resolve({
-        ok: true,
-        payload: envelope.payload ?? null,
-        ts: envelope.ts || new Date().toISOString(),
-      });
-    }
-
-    const command = this.commandStore.findByReqSeq(client.deviceId, reqSeq);
-    const pendingPty = this.ptySessionStore.consumePendingReq(client.deviceId, reqSeq);
-    if (pendingPty) {
-      const ts = envelope.ts || new Date().toISOString();
-      if (pendingPty.type === 'open') {
-        const opened = this.ptySessionStore.markOpen(pendingPty.sessionId, ts);
-        this.ptyAudit.append({
-          id: uuidv4(),
-          sessionId: opened.sessionId,
-          deviceId: opened.deviceId,
-          ts,
-          eventType: 'pty_opened',
-          actorType: opened.openedByActorType as any,
-          actorId: opened.openedByActorId,
-          summary: 'PTY session opened',
-          details: { recordingEnabled: opened.recordingEnabled, cols: opened.cols, rows: opened.rows },
-        });
-      } else if (pendingPty.type === 'close') {
-        this.ptySessionStore.markClosing(pendingPty.sessionId, ts);
-      }
-    }
-    if (!command) {
-      return;
-    }
+    handleAgentAck({
+      envelope,
+      client,
+      pendingReqResponses: this.pendingReqResponses,
+      commandStore: this.commandStore,
+      ptySessionStore: this.ptySessionStore,
+      ptyAudit: this.ptyAudit,
+    });
 
     // Transport-level ack only confirms receipt of the frame.
     // Command lifecycle audit should come from explicit command_status
@@ -582,498 +378,87 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   private handleNack(envelope: any, client: any) {
-    const reqSeq = typeof envelope.reqSeq === 'number' ? envelope.reqSeq : null;
-    if (reqSeq == null) {
-      return;
-    }
-
-    const pendingResponse = this.pendingReqResponses.get(reqSeq);
-    if (pendingResponse && pendingResponse.deviceId === client.deviceId) {
-      clearTimeout(pendingResponse.timer);
-      this.pendingReqResponses.delete(reqSeq);
-      pendingResponse.reject({
-        code:
-          envelope.payload && typeof envelope.payload === 'object' && typeof envelope.payload.error === 'string'
-            ? envelope.payload.error
-            : 'AGENT_NACK',
-        payload: envelope.payload ?? null,
-        ts: envelope.ts || new Date().toISOString(),
-      });
-    }
-
-    const command = this.commandStore.findByReqSeq(client.deviceId, reqSeq);
-    const pendingPty = this.ptySessionStore.consumePendingReq(client.deviceId, reqSeq);
-    if (!command) {
-      if (!pendingPty) {
-        return;
-      }
-    }
-
-    const payload =
-      envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
-    const reasonCode =
-      typeof payload.error === 'string' && payload.error.trim().length
-        ? payload.error.trim()
-        : 'AGENT_NACK';
-    const finishedAt = envelope.ts || new Date().toISOString();
-
-    if (pendingPty) {
-      if (pendingPty.type === 'open') {
-        this.ptySessionStore.markOpenFailed(pendingPty.sessionId, reasonCode, reasonCode, finishedAt);
-      }
-      return;
-    }
-
-    this.commandStore.markFailed(command.commandId, reasonCode, reasonCode, finishedAt);
-    this.commandStore.appendAuditIfMissing({
-      id: uuidv4(),
-      commandId: command.commandId,
-      ts: finishedAt,
-      eventType: 'failed',
-      source: 'agent',
-      summary: `Agent rejected reqSeq ${reqSeq}: ${reasonCode}`,
-      details: {
-        reqSeq,
-        payload: envelope.payload ?? null,
-      },
+    handleAgentNack({
+      envelope,
+      client,
+      pendingReqResponses: this.pendingReqResponses,
+      commandStore: this.commandStore,
+      ptySessionStore: this.ptySessionStore,
     });
   }
 
   private handleRecentLogs(envelope: any, client: any) {
-    console.log(`Recent logs from ${client.deviceId}:`, redactTelemetryPayload(envelope.payload ?? null));
-
-    this.logStore.append({
-      id: uuidv4(),
-      deviceId: client.deviceId,
-      type: 'recent_logs',
-      sessionId: client.sessionId ?? null,
-      functionId: null,
-      seq: typeof envelope.seq === 'number' ? envelope.seq : Date.now(),
-      ts: envelope.ts || new Date().toISOString(),
-      payload: envelope.payload ?? null,
+    handleAgentRecentLogs({
+      envelope,
+      client,
+      logStore: this.logStore,
+      redactTelemetryPayload,
+      sendMessage: this.sendMessage.bind(this),
+      completeRefreshCommand: this.completeRefreshCommand.bind(this),
     });
-
-    this.sendMessage(client, {
-      type: 'ack',
-      reqSeq: envelope.seq,
-      payload: { status: 'ok' },
-    });
-
-    this.completeRefreshCommand(client.deviceId, 'request_recent_logs', envelope.ts, 'recent logs received');
-
   }
 
   private handleFunctionStatus(envelope: any, client: any) {
-    console.log(`Function status from ${client.deviceId}:`, redactTelemetryPayload(envelope.payload ?? null));
-
-    const payload =
-      envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
-    const functionId =
-      typeof payload.functionId === 'string' ? payload.functionId : null;
-
-    this.logStore.append({
-      id: uuidv4(),
-      deviceId: client.deviceId,
-      type: 'function-status',
-      sessionId:
-        typeof payload.sessionId === 'string'
-          ? payload.sessionId
-          : client.sessionId ?? null,
-      functionId,
-      seq: typeof envelope.seq === 'number' ? envelope.seq : Date.now(),
-      ts: envelope.ts || new Date().toISOString(),
-      payload: envelope.payload ?? null,
+    handleAgentFunctionStatus({
+      envelope,
+      client,
+      logStore: this.logStore,
+      redactTelemetryPayload,
+      sendMessage: this.sendMessage.bind(this),
+      advanceRestartCommandFromFunctionStatus: this.advanceRestartCommandFromFunctionStatus.bind(this),
     });
-
-    this.sendMessage(client, {
-      type: 'ack',
-      reqSeq: envelope.seq,
-      payload: { status: 'ok' },
-    });
-
-    this.advanceRestartCommandFromFunctionStatus(client.deviceId, envelope.ts, payload);
   }
 
   private handlePtyOutput(envelope: any, client: any) {
-    const payload =
-      envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
-    const sessionId =
-      typeof payload.sessionId === 'string'
-        ? payload.sessionId
-        : typeof payload.id === 'string'
-          ? payload.id
-          : client.sessionId ?? null;
-
-    this.logStore.append({
-      id: uuidv4(),
-      deviceId: client.deviceId,
-      type: 'pty-output',
-      sessionId,
-      functionId: null,
-      seq: typeof envelope.seq === 'number' ? envelope.seq : Date.now(),
-      ts: envelope.ts || new Date().toISOString(),
-      payload: envelope.payload ?? null,
+    handleAgentPtyOutput({
+      envelope,
+      client,
+      logStore: this.logStore,
+      ptySessionStore: this.ptySessionStore,
+      ptyHub: this.ptyHub,
     });
-    if (sessionId) {
-      this.ptySessionStore.noteOutput(sessionId, envelope.ts || new Date().toISOString());
-      const data = typeof payload.data === 'string' ? payload.data : '';
-      this.ptyHub.appendOutput(sessionId, data);
-      this.ptyHub.broadcast(sessionId, {
-        type: 'pty_output',
-        payload: {
-          ...(payload ?? {}),
-          sessionId,
-        },
-      });
-    }
   }
 
   private handlePtyExit(envelope: any, client: any) {
-    const payload =
-      envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
-    const sessionId =
-      typeof payload.sessionId === 'string'
-        ? payload.sessionId
-        : typeof payload.id === 'string'
-          ? payload.id
-          : client.sessionId ?? null;
-
-    this.logStore.append({
-      id: uuidv4(),
-      deviceId: client.deviceId,
-      type: 'pty-exit',
-      sessionId,
-      functionId: null,
-      seq: typeof envelope.seq === 'number' ? envelope.seq : Date.now(),
-      ts: envelope.ts || new Date().toISOString(),
-      payload: envelope.payload ?? null,
+    handleAgentPtyExit({
+      envelope,
+      client,
+      logStore: this.logStore,
+      ptySessionStore: this.ptySessionStore,
+      ptyAudit: this.ptyAudit,
+      ptyHub: this.ptyHub,
     });
-    if (sessionId) {
-      const reason =
-        typeof payload.reason === 'string' && payload.reason.trim().length
-          ? payload.reason.trim()
-          : null;
-      const closed = this.ptySessionStore.markClosed(sessionId, envelope.ts || new Date().toISOString(), reason);
-      this.ptyAudit.append({
-        id: uuidv4(),
-        sessionId: closed.sessionId,
-        deviceId: closed.deviceId,
-        ts: closed.closedAt || envelope.ts || new Date().toISOString(),
-        eventType: 'pty_closed',
-        actorType: 'system',
-        actorId: null,
-        summary: 'PTY session closed after agent exit',
-        details: { exitReason: reason, payload: { exitCode: payload.exitCode ?? null, reason } },
-      });
-      this.ptyHub.broadcast(sessionId, {
-        type: 'pty_exit',
-        payload: {
-          ...(payload ?? {}),
-          sessionId,
-        },
-      });
-    }
   }
 
   private handleTransferProgress(envelope: any, client: any) {
-    const payload =
-      envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
-    const transferId =
-      typeof payload.transferId === 'string' ? payload.transferId.trim() : '';
-    if (!transferId) {
-      return;
-    }
-
-    const existing = this.fileTransferStore.get(transferId);
-    if (!existing || existing.deviceId !== client.deviceId) {
-      return;
-    }
-
-    if (existing.state === 'canceled' && existing.reasonCode === 'transfer_stop_requested') {
-      this.sendMessage(client, {
-        type: 'ack',
-        reqSeq: envelope.seq,
-        payload: { status: 'ok' },
-      });
-      return;
-    }
-
-    this.fileTransferStore.updateProgress(
-      transferId,
-      envelope.ts || new Date().toISOString(),
-      {
-        attempt:
-          typeof payload.attempt === 'number' && Number.isFinite(payload.attempt)
-            ? payload.attempt
-            : existing.attempt,
-        maxAttempts:
-          typeof payload.maxAttempts === 'number' && Number.isFinite(payload.maxAttempts)
-            ? payload.maxAttempts
-            : existing.maxAttempts,
-        resumeSupported:
-          typeof payload.resumeSupported === 'boolean'
-            ? payload.resumeSupported
-            : existing.resumeSupported,
-        retryScheduled:
-          typeof payload.retryScheduled === 'boolean'
-            ? payload.retryScheduled
-            : existing.retryScheduled,
-        resumeToken:
-          typeof payload.resumeToken === 'string'
-            ? payload.resumeToken
-            : payload.resumeToken === null
-              ? null
-              : existing.resumeToken,
-        resumeOffsetBytes:
-          typeof payload.resumeOffsetBytes === 'number' && Number.isFinite(payload.resumeOffsetBytes)
-            ? payload.resumeOffsetBytes
-            : payload.resumeOffsetBytes === null
-              ? null
-              : existing.resumeOffsetBytes,
-        tempPathHint:
-          typeof payload.tempPathHint === 'string'
-            ? payload.tempPathHint
-            : payload.tempPathHint === null
-              ? null
-              : existing.tempPathHint,
-        bytesTransferred:
-          typeof payload.bytesTransferred === 'number' && Number.isFinite(payload.bytesTransferred)
-            ? payload.bytesTransferred
-            : existing.bytesTransferred,
-        bytesTotal:
-          typeof payload.bytesTotal === 'number' && Number.isFinite(payload.bytesTotal)
-            ? payload.bytesTotal
-            : payload.bytesTotal === null
-              ? null
-              : existing.bytesTotal,
-        percent:
-          typeof payload.percent === 'number' && Number.isFinite(payload.percent)
-            ? payload.percent
-            : payload.percent === null
-              ? null
-              : existing.percent,
-        throughputBps:
-          typeof payload.throughputBps === 'number' && Number.isFinite(payload.throughputBps)
-            ? payload.throughputBps
-            : payload.throughputBps === null
-              ? null
-              : existing.throughputBps,
-        etaSec:
-          typeof payload.etaSec === 'number' && Number.isFinite(payload.etaSec)
-            ? payload.etaSec
-            : payload.etaSec === null
-              ? null
-              : existing.etaSec,
-        phase: typeof payload.phase === 'string' ? payload.phase : existing.phase,
-        message: typeof payload.message === 'string' ? payload.message : existing.message,
-      },
-    );
-
-    this.sendMessage(client, {
-      type: 'ack',
-      reqSeq: envelope.seq,
-      payload: { status: 'ok' },
+    handleAgentTransferProgress({
+      envelope,
+      client,
+      fileTransferStore: this.fileTransferStore,
+      sendMessage: this.sendMessage.bind(this),
     });
   }
 
   private handleTransferStatus(envelope: any, client: any) {
-    const payload =
-      envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
-    const transferId =
-      typeof payload.transferId === 'string' ? payload.transferId.trim() : '';
-    if (!transferId) {
-      return;
-    }
-
-    const existing = this.fileTransferStore.get(transferId);
-    if (!existing || existing.deviceId !== client.deviceId) {
-      return;
-    }
-
-    const state =
-      typeof payload.state === 'string' && payload.state.trim().length
-        ? payload.state.trim()
-        : existing.state;
-    if (
-      state === 'queued'
-      || state === 'starting'
-      || state === 'running'
-      || state === 'succeeded'
-      || state === 'failed'
-      || state === 'canceled'
-    ) {
-      const nextState = existing.state === 'canceled'
-        && existing.reasonCode === 'transfer_stop_requested'
-        && state === 'failed'
-        ? 'canceled'
-        : state;
-      this.fileTransferStore.markState(
-        transferId,
-        nextState,
-        envelope.ts || new Date().toISOString(),
-        {
-          phase: typeof payload.phase === 'string' ? payload.phase : existing.phase,
-          reasonCode: typeof payload.reasonCode === 'string' ? payload.reasonCode : existing.reasonCode,
-          reasonDetail:
-            typeof payload.reasonDetail === 'string' ? payload.reasonDetail : existing.reasonDetail,
-          message: typeof payload.message === 'string' ? payload.message : existing.message,
-          attempt:
-            typeof payload.attempt === 'number' && Number.isFinite(payload.attempt)
-              ? payload.attempt
-              : existing.attempt,
-          maxAttempts:
-            typeof payload.maxAttempts === 'number' && Number.isFinite(payload.maxAttempts)
-              ? payload.maxAttempts
-              : existing.maxAttempts,
-          resumeSupported:
-            typeof payload.resumeSupported === 'boolean'
-              ? payload.resumeSupported
-              : existing.resumeSupported,
-          retryScheduled:
-            typeof payload.retryScheduled === 'boolean'
-              ? payload.retryScheduled
-              : existing.retryScheduled,
-          resumeToken:
-            typeof payload.resumeToken === 'string'
-              ? payload.resumeToken
-              : payload.resumeToken === null
-                ? null
-                : existing.resumeToken,
-          resumeOffsetBytes:
-            typeof payload.resumeOffsetBytes === 'number' && Number.isFinite(payload.resumeOffsetBytes)
-              ? payload.resumeOffsetBytes
-              : payload.resumeOffsetBytes === null
-                ? null
-                : existing.resumeOffsetBytes,
-          tempPathHint:
-            typeof payload.tempPathHint === 'string'
-              ? payload.tempPathHint
-              : payload.tempPathHint === null
-                ? null
-                : existing.tempPathHint,
-        },
-      );
-    }
-
-    this.sendMessage(client, {
-      type: 'ack',
-      reqSeq: envelope.seq,
-      payload: { status: 'ok' },
+    handleAgentTransferStatus({
+      envelope,
+      client,
+      fileTransferStore: this.fileTransferStore,
+      sendMessage: this.sendMessage.bind(this),
     });
   }
 
   private handleCommandStatus(envelope: any, client: any) {
-    const commandId =
-      typeof envelope.commandId === 'string' && envelope.commandId.trim().length
-        ? envelope.commandId.trim()
-        : null;
-    if (!commandId) {
-      return;
-    }
-
-    const command = this.commandStore.getCommand(commandId);
-    if (!command || command.deviceId !== client.deviceId) {
-      return;
-    }
-
-    const payload =
-      envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
-    const state = typeof payload.state === 'string' ? payload.state.trim() : '';
-    const outcome =
-      typeof payload.outcome === 'string' && payload.outcome.trim().length
-        ? payload.outcome.trim()
-        : null;
-    const reasonCode =
-      typeof payload.reasonCode === 'string' && payload.reasonCode.trim().length
-        ? payload.reasonCode.trim()
-        : null;
-    const reasonDetail =
-      typeof payload.reasonDetail === 'string' && payload.reasonDetail.trim().length
-        ? payload.reasonDetail.trim()
-        : null;
-    const ts = envelope.ts || new Date().toISOString();
-
-    if (state === 'acknowledged') {
-      if (!this.commandStore.hasAuditEvent(commandId, ['acknowledged', 'executing', 'succeeded', 'failed', 'canceled'], 'agent')) {
-        this.commandStore.appendAuditIfMissing({
-          id: uuidv4(),
-          commandId,
-          ts,
-          eventType: 'acknowledged',
-          source: 'agent',
-          summary: `Agent acknowledged ${command.commandType}`,
-          details: payload,
-        });
-      }
-      return;
-    }
-
-    if (state === 'executing') {
-      const updated = this.commandStore.markExecuting(commandId, ts);
-      if (updated.state === 'executing' || updated.executingAt === ts) {
-        this.commandStore.appendAuditIfMissing({
-          id: uuidv4(),
-          commandId,
-          ts,
-          eventType: 'executing',
-          source: 'agent',
-          summary: `Agent started ${command.commandType}`,
-          details: payload,
-        });
-      }
-      return;
-    }
-
-    if (state === 'succeeded') {
-      if (command.state === 'succeeded' || command.state === 'failed' || command.state === 'canceled') {
-        return;
-      }
-
-      this.commandStore.markSucceeded(commandId, outcome, ts);
-      this.commandStore.appendAuditIfMissing({
-        id: uuidv4(),
-        commandId,
-        ts,
-        eventType: 'succeeded',
-        source: 'agent',
-        summary: `Agent completed ${command.commandType}`,
-        details: payload,
-      });
-      return;
-    }
-
-    if (state === 'failed') {
-      if (command.state === 'succeeded' || command.state === 'failed' || command.state === 'canceled') {
-        return;
-      }
-
-      this.commandStore.markFailed(
-        commandId,
-        reasonCode ?? 'COMMAND_FAILED',
-        reasonDetail,
-        ts,
-      );
-      this.commandStore.appendAuditIfMissing({
-        id: uuidv4(),
-        commandId,
-        ts,
-        eventType: 'failed',
-        source: 'agent',
-        summary: `Agent failed ${command.commandType}`,
-        details: payload,
-      });
-    }
+    handleAgentCommandStatus({
+      envelope,
+      client,
+      commandStore: this.commandStore,
+    });
   }
 
   private sendMessage(client: any, message: any) {
-    const envelope = {
-      ...message,
-      deviceId: 'server',
-      seq: ++this.seqCounter,
-      ts: new Date().toISOString(),
-    };
-    client.send(JSON.stringify(envelope));
-    return envelope;
+    this.seqCounter += 1;
+    return sendAgentMessage(client, message, this.seqCounter);
   }
 
   private completeRefreshCommand(
@@ -1094,7 +479,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const ts = observedAt || new Date().toISOString();
     this.commandStore.markSucceeded(command.commandId, outcome, ts);
     this.commandStore.appendAuditIfMissing({
-      id: uuidv4(),
+      id: randomUUID(),
       commandId: command.commandId,
       ts,
       eventType: 'succeeded',
@@ -1129,7 +514,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (['starting', 'stopping', 'restarting', 'authenticating', 'idle'].includes(state)) {
       this.commandStore.markExecuting(command.commandId, ts);
       this.commandStore.appendAuditIfMissing({
-        id: uuidv4(),
+        id: randomUUID(),
         commandId: command.commandId,
         ts,
         eventType: 'executing',
@@ -1152,7 +537,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
         ts,
       );
       this.commandStore.appendAuditIfMissing({
-        id: uuidv4(),
+        id: randomUUID(),
         commandId: command.commandId,
         ts,
         eventType: 'failed',
@@ -1170,7 +555,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (['running', 'authenticated'].includes(state)) {
       this.commandStore.markExecuting(command.commandId, ts);
       this.commandStore.appendAuditIfMissing({
-        id: uuidv4(),
+        id: randomUUID(),
         commandId: command.commandId,
         ts,
         eventType: 'executing',
@@ -1184,7 +569,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
       this.commandStore.markSucceeded(command.commandId, message || state, ts);
       this.commandStore.appendAuditIfMissing({
-        id: uuidv4(),
+        id: randomUUID(),
         commandId: command.commandId,
         ts,
         eventType: 'succeeded',
@@ -1226,9 +611,3 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 }
 
-function payloadHasServerId(payload: unknown, serverId: string): boolean {
-  return !!payload
-    && typeof payload === 'object'
-    && typeof (payload as Record<string, unknown>).serverId === 'string'
-    && (payload as Record<string, unknown>).serverId === serverId;
-}

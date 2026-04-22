@@ -3,10 +3,10 @@ import { NestFactory } from '@nestjs/core';
 import { WsAdapter } from '@nestjs/platform-ws';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { join } from 'path';
-import { sep } from 'node:path';
 import { AppModule } from './app.module';
 import { validateAuthConfig } from './config/auth';
 import { CONTENT_SECURITY_POLICY } from './security-headers';
+import { isAdminNextHashedAssetPath } from './admin-next-cache';
 
 async function bootstrap() {
   validateAuthConfig();
@@ -17,8 +17,7 @@ async function bootstrap() {
   app.setBaseViewsDir(join(__dirname, '..', 'views'));
   app.useStaticAssets(join(__dirname, '..', 'public'), {
     setHeaders: (res, path) => {
-      const normalizedPath = path.split(sep).join('/');
-      if (normalizedPath.includes('/public/admin-next/assets/')) {
+      if (isAdminNextHashedAssetPath(path)) {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       }
     },

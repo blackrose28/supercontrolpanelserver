@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { FileTransferRecord, FileTransferStore } from './file-transfer.store';
+import { FileTransferStore } from './file-transfer.store';
+import { FileTransferRecord } from './file-transfer.types';
 
 export interface FileTransferSloSummary {
   deviceId: string | null;

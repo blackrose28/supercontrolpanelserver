@@ -8,3 +8,18 @@ npm-debug.log*
 .gitnexus
 
 cc-server.db
+
+# Test coverage
+coverage/
+
+# Build artifacts
+public/admin-next/
+vitest.config.js
+vitest.config.js.map
+vitest.config.d.ts
+
+# Admin-next subdirectory ignores
+admin-next/node_modules/
+admin-next/coverage/
+admin-next/dist/
+admin-next/package-lock.json

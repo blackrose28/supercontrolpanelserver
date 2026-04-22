@@ -4,6 +4,7 @@ import { DeviceStore } from './devices/device.store';
 import { DevicesController } from './devices/devices.controller';
 import { HealthController } from './health/health.controller';
 import { AdminController } from './admin/admin.controller';
+import { AdminNextController } from './admin/admin-next.controller';
 import { LogsController } from './logs/logs.controller';
 import { LogStore } from './logs/log.store';
 import { DatabaseService } from './database/database.service';
@@ -29,7 +30,7 @@ import { RemoteBrowserController } from './file-ops/remote-browser.controller';
 
 @Module({
   imports: [],
-  controllers: [DevicesController, CommandsController, HealthController, AdminController, LogsController, PtyController, FileOpsController, RemoteBrowserController],
+  controllers: [DevicesController, CommandsController, HealthController, AdminController, AdminNextController, LogsController, PtyController, FileOpsController, RemoteBrowserController],
   providers: [
     AgentGateway,
     DeviceStore,

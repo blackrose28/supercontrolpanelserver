@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **SuperControlPanelServer** (150 symbols, 456 relationships, 20 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **cc-server** (1730 symbols, 6109 relationships, 147 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -17,7 +17,7 @@ This project is indexed by GitNexus as **SuperControlPanelServer** (150 symbols,
 
 1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
 2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/SuperControlPanelServer/process/{processName}` — trace the full execution flow step by step
+3. `READ gitnexus://repo/cc-server/process/{processName}` — trace the full execution flow step by step
 4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
 
 ## When Refactoring
@@ -56,10 +56,10 @@ This project is indexed by GitNexus as **SuperControlPanelServer** (150 symbols,
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/SuperControlPanelServer/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/SuperControlPanelServer/clusters` | All functional areas |
-| `gitnexus://repo/SuperControlPanelServer/processes` | All execution flows |
-| `gitnexus://repo/SuperControlPanelServer/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/cc-server/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/cc-server/clusters` | All functional areas |
+| `gitnexus://repo/cc-server/processes` | All execution flows |
+| `gitnexus://repo/cc-server/process/{name}` | Step-by-step execution trace |
 
 ## Self-Check Before Finishing
 

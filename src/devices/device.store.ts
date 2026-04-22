@@ -8,6 +8,7 @@ export interface Device {
   lastSeenAt: string;
   status: 'connected' | 'disconnected';
   agentToken?: string;
+  os?: string;
 }
 
 export interface Session {
@@ -47,9 +48,26 @@ export class DeviceStore {
 
   findDeviceByAgentToken(token: string): Device | undefined {
     const normalized = normalizeStoredSecret(token);
-    return Array.from(this.devices.values()).find(
+    console.log('[DEVICE_STORE] Looking up device by token');
+    console.log('[DEVICE_STORE] Input token:', token.substring(0, 8) + '...');
+    console.log('[DEVICE_STORE] Normalized token:', normalized.substring(0, 15) + '...');
+    console.log('[DEVICE_STORE] Total devices in store:', this.devices.size);
+
+    const device = Array.from(this.devices.values()).find(
       (device) => device.agentToken === normalized,
     );
+
+    if (device) {
+      console.log('[DEVICE_STORE] Device found:', device.id, device.name);
+    } else {
+      console.log('[DEVICE_STORE] Device NOT found');
+      console.log('[DEVICE_STORE] Available device tokens:');
+      Array.from(this.devices.values()).forEach(d => {
+        console.log('  -', d.id, d.name, 'token:', d.agentToken?.substring(0, 15) + '...');
+      });
+    }
+
+    return device;
   }
 
   updateDeviceStatus(id: string, status: 'connected' | 'disconnected'): void {
@@ -57,6 +75,14 @@ export class DeviceStore {
     if (device) {
       device.status = status;
       device.lastSeenAt = new Date().toISOString();
+      this.persistDevice(device);
+    }
+  }
+
+  updateDeviceOs(id: string, os: string): void {
+    const device = this.devices.get(id);
+    if (device && device.os !== os) {
+      device.os = os;
       this.persistDevice(device);
     }
   }
@@ -96,15 +122,18 @@ export class DeviceStore {
   }
 
   private loadDevicesFromDb() {
+    console.log('[DEVICE_STORE] Loading devices from database...');
     const rows = this.databaseService.connection
       .prepare(
         `
-          SELECT id, name, lastSeenAt, status, agentToken
+          SELECT id, name, lastSeenAt, status, agentToken, os
           FROM devices
           ORDER BY lastSeenAt DESC, id DESC
         `,
       )
       .all() as Device[];
+
+    console.log('[DEVICE_STORE] Found', rows.length, 'devices in database');
 
     for (const row of rows) {
       const device: Device = {
@@ -113,9 +142,12 @@ export class DeviceStore {
         lastSeenAt: row.lastSeenAt,
         status: 'disconnected',
         agentToken: normalizeStoredSecret(row.agentToken),
+        os: row.os ?? undefined,
       };
+      console.log('[DEVICE_STORE] Loading device:', device.id, device.name, 'token:', device.agentToken?.substring(0, 15) + '...');
       this.devices.set(device.id, device);
       if (device.agentToken !== row.agentToken) {
+        console.log('[DEVICE_STORE] Token was normalized, persisting back to DB');
         this.persistDevice(device);
       }
     }
@@ -125,19 +157,22 @@ export class DeviceStore {
         .prepare(`UPDATE devices SET status = 'disconnected'`)
         .run();
     }
+
+    console.log('[DEVICE_STORE] Device loading complete. Total devices in memory:', this.devices.size);
   }
 
   private persistDevice(device: Device) {
     this.databaseService.connection
       .prepare(
         `
-          INSERT INTO devices (id, name, lastSeenAt, status, agentToken)
-          VALUES (@id, @name, @lastSeenAt, @status, @agentToken)
+          INSERT INTO devices (id, name, lastSeenAt, status, agentToken, os)
+          VALUES (@id, @name, @lastSeenAt, @status, @agentToken, @os)
           ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             lastSeenAt = excluded.lastSeenAt,
             status = excluded.status,
-            agentToken = excluded.agentToken
+            agentToken = excluded.agentToken,
+            os = excluded.os
         `,
       )
       .run({
@@ -146,6 +181,7 @@ export class DeviceStore {
         lastSeenAt: device.lastSeenAt,
         status: device.status,
         agentToken: normalizeStoredSecret(device.agentToken),
+        os: device.os ?? null,
       });
   }
 }

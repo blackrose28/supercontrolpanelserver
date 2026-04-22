@@ -19,5 +19,7 @@
     "noFallthroughCasesInSwitch": false,
     "esModuleInterop": true,
     "types": ["node"]
-  }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.spec.ts"]
 }

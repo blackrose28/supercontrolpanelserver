@@ -1,5 +1,5 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { CommandRecord, CommandStore, CommandState } from './command.store';
 import { DeviceStore } from '../devices/device.store';
 
@@ -66,7 +66,7 @@ export class CommandTimeoutService implements OnModuleInit, OnModuleDestroy {
 
         this.commandStore.markFailed(command.commandId, reasonCode, reasonDetail, finishedAt);
         this.commandStore.appendAuditIfMissing({
-          id: uuidv4(),
+          id: randomUUID(),
           commandId: command.commandId,
           ts: finishedAt,
           eventType: 'reconciled',
@@ -81,7 +81,7 @@ export class CommandTimeoutService implements OnModuleInit, OnModuleDestroy {
           },
         });
         this.commandStore.appendAuditIfMissing({
-          id: uuidv4(),
+          id: randomUUID(),
           commandId: command.commandId,
           ts: finishedAt,
           eventType: 'failed',
@@ -118,7 +118,7 @@ export class CommandTimeoutService implements OnModuleInit, OnModuleDestroy {
 
       this.commandStore.markFailed(command.commandId, reasonCode, reasonDetail, finishedAt);
       this.commandStore.appendAuditIfMissing({
-        id: uuidv4(),
+        id: randomUUID(),
         commandId: command.commandId,
         ts: finishedAt,
         eventType: 'failed',
