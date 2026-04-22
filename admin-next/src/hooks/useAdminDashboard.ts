@@ -70,6 +70,11 @@ export function useAdminDashboard() {
   const [telemetryFromTsFilter, setTelemetryFromTsFilter] = useState('');
   const [telemetryToTsFilter, setTelemetryToTsFilter] = useState('');
   const [deviceActionLoadingId, setDeviceActionLoadingId] = useState<string | null>(null);
+  const [recentLogsLimit, setRecentLogsLimit] = useState(20);
+  const [commandsLimit, setCommandsLimit] = useState(20);
+  const [transfersLimit, setTransfersLimit] = useState(50);
+  const [telemetryLimit, setTelemetryLimit] = useState(100);
+
   const [deviceActionError, setDeviceActionError] = useState<string | null>(null);
 
   async function loadSelectedDevice(deviceId: string) {
@@ -136,7 +141,7 @@ export function useAdminDashboard() {
         setRuntimeSummaryLoading(false);
       });
 
-    const logsTask = fetchRecentLogs(deviceId, 20)
+    const logsTask = fetchRecentLogs(deviceId, recentLogsLimit)
       .then((logsPayload) => {
         if (selectionRequestIdRef.current !== requestId) {
           return;
@@ -188,7 +193,7 @@ export function useAdminDashboard() {
     }
 
     try {
-      const logsPayload = await fetchRecentLogs(deviceId, 20);
+      const logsPayload = await fetchRecentLogs(deviceId, recentLogsLimit);
       setRecentLogs(logsPayload);
       setRecentLogsError(null);
     } catch (err) {
@@ -232,7 +237,7 @@ export function useAdminDashboard() {
     }
 
     try {
-      const nextCommands = await fetchCommands(deviceId, 20);
+      const nextCommands = await fetchCommands(deviceId, commandsLimit);
       setCommands(nextCommands);
       setCommandsError(null);
 
@@ -268,7 +273,7 @@ export function useAdminDashboard() {
     setTransfersLoading(true);
 
     try {
-      const nextTransfers = await fetchTransfers(deviceId, 50);
+      const nextTransfers = await fetchTransfers(deviceId, transfersLimit);
       setTransfers(nextTransfers);
       setTransfersError(null);
     } catch (err) {
@@ -318,7 +323,7 @@ export function useAdminDashboard() {
 
     try {
       const events = await fetchTelemetry(deviceId, {
-        limit: 100,
+        limit: telemetryLimit,
         type: telemetryTypeFilter || undefined,
         q: telemetryTextFilter.trim() || undefined,
         fromTs: telemetryFromTsFilter.trim() || undefined,
@@ -468,7 +473,7 @@ export function useAdminDashboard() {
     void loadSelectedDevice(selectedDeviceId);
     void loadCommands(selectedDeviceId);
     void loadTelemetry(selectedDeviceId);
-  }, [selectedDeviceId, telemetryTypeFilter, telemetryTextFilter, telemetryFromTsFilter, telemetryToTsFilter]);
+  }, [selectedDeviceId, telemetryTypeFilter, telemetryTextFilter, telemetryFromTsFilter, telemetryToTsFilter, recentLogsLimit, commandsLimit, telemetryLimit]);
 
   useEffect(() => {
     if (!selectedDeviceId) {
@@ -495,7 +500,7 @@ export function useAdminDashboard() {
       transfersSub.unsubscribe();
       window.clearInterval(commandsInterval);
     };
-  }, [selectedDeviceId, telemetryTypeFilter, telemetryTextFilter, telemetryFromTsFilter, telemetryToTsFilter]);
+  }, [selectedDeviceId, telemetryTypeFilter, telemetryTextFilter, telemetryFromTsFilter, telemetryToTsFilter, recentLogsLimit, commandsLimit, telemetryLimit]);
 
   const telemetryExportUrl = selectedDeviceId
     ? buildTelemetryExportUrl(selectedDeviceId, {
@@ -613,6 +618,14 @@ export function useAdminDashboard() {
         void loadRuntimeSummaryOnly(selectedDeviceId);
       }
     },
+    recentLogsLimit,
+    setRecentLogsLimit,
+    commandsLimit,
+    setCommandsLimit,
+    transfersLimit,
+    setTransfersLimit,
+    telemetryLimit,
+    setTelemetryLimit,
     retryRecentLogs: () => {
       if (selectedDeviceId) {
         void loadRecentLogsOnly(selectedDeviceId);
