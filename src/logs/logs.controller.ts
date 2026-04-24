@@ -7,6 +7,7 @@ import {
   HttpException,
   HttpStatus,
   MessageEvent,
+  Param,
   Post,
   Query,
   Res,
@@ -180,6 +181,54 @@ export class LogsController {
     }
 
     return this.logStore.getDeviceRuntimeSummary(deviceId);
+  }
+
+  @Get('devices/:id/tunnels/:serverId/logs')
+  tunnelLogs(
+    @Param('id') deviceId: string,
+    @Param('serverId') serverId: string,
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    requireAdminAuthorized(auth, cookie, this.adminSessions, this.adminApiTokens, [
+      'device:read',
+      'logs:read',
+    ]);
+
+    if (!this.deviceStore.getDevice(deviceId)) {
+      throw new HttpException('Device not found', HttpStatus.NOT_FOUND);
+    }
+
+    const functionId = `server-tunnel-${serverId}`;
+    const summary = this.logStore.getDeviceRuntimeSummary(deviceId);
+    let sessionId = summary.functions?.[functionId]?.sessionId ?? null;
+
+    // When the tunnel PTY exits, the sessionId is cleared to null.
+    // Fall back to the last known sessionId so logs remain queryable.
+    if (!sessionId) {
+      sessionId = this.logStore.getLastSessionIdForFunction(deviceId, functionId);
+    }
+
+    if (!sessionId) {
+      return { entries: [], total: 0 };
+    }
+
+    const resolvedLimit = Math.min(Math.max(Number(limit) || 200, 1), 5000);
+    const resolvedOffset = Math.max(Number(offset) || 0, 0);
+    const total = this.logStore.countPtyOutputBySession(deviceId, sessionId);
+    const entries = this.logStore.listPtyOutputBySession(deviceId, sessionId, resolvedLimit, resolvedOffset).map((entry) => {
+      const payload = entry.payload && typeof entry.payload === 'object'
+        ? entry.payload as Record<string, unknown>
+        : {};
+      return {
+        ts: entry.ts,
+        sessionId: entry.sessionId ?? null,
+        data: typeof payload.data === 'string' ? payload.data : '',
+      };
+    });
+    return { entries, total };
   }
 
   @Get('log-settings')

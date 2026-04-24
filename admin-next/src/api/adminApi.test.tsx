@@ -17,6 +17,7 @@ import {
   dismissFinishedTransfers,
   resumeTransfer,
   subscribeTelemetryStream,
+  subscribeCommandsStream,
   subscribeTransfersStream,
 } from './adminApi';
 
@@ -466,5 +467,36 @@ describe('adminApi', () => {
 
     sub.unsubscribe();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('subscribeCommandsStream opens stream and unsubscribes', async () => {
+    const close = vi.fn();
+    const ctor = vi.fn(function(this: { onmessage: null | (() => void) }) {
+      this.onmessage = null;
+      return { close };
+    });
+
+    vi.stubGlobal('EventSource', ctor as unknown as typeof EventSource);
+    const onMessage = vi.fn();
+
+    const sub = subscribeCommandsStream('dev 1', onMessage);
+
+    expect(ctor).toHaveBeenCalledWith('/v1/commands/stream?deviceId=dev%201', { withCredentials: true });
+
+    const instance = ctor.mock.instances[0] as { onmessage: null | (() => void) };
+    instance.onmessage?.();
+    expect(onMessage).toHaveBeenCalledTimes(1);
+
+    sub.unsubscribe();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('subscribeCommandsStream returns no-op when EventSource is unavailable', () => {
+    vi.stubGlobal('EventSource', undefined);
+    const onMessage = vi.fn();
+    const sub = subscribeCommandsStream('dev-1', onMessage);
+    expect(typeof sub.unsubscribe).toBe('function');
+    sub.unsubscribe();
+    expect(onMessage).not.toHaveBeenCalled();
   });
 });

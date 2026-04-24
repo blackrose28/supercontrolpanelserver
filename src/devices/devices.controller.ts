@@ -246,6 +246,60 @@ export class DevicesController {
     });
   }
 
+  @Post('devices/:id/request-start-server-tunnel')
+  requestStartServerTunnel(
+    @Param('id') id: string,
+    @Body('serverId') serverId: string | undefined,
+    @Body('commandId') commandId: string | undefined,
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    const principal = requireAdminMutationAuthorized(
+      auth,
+      cookie,
+      csrfToken,
+      this.adminSessions,
+      this.adminApiTokens,
+      ['device:control'],
+    );
+
+    return this.commandDispatch.dispatchGenericCommand({
+      deviceId: id,
+      commandType: 'start_server_tunnel',
+      requestedCommandId: commandId,
+      payload: { serverId: String(serverId || '').trim() },
+      principal,
+    });
+  }
+
+  @Post('devices/:id/request-stop-server-tunnel')
+  requestStopServerTunnel(
+    @Param('id') id: string,
+    @Body('serverId') serverId: string | undefined,
+    @Body('commandId') commandId: string | undefined,
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    const principal = requireAdminMutationAuthorized(
+      auth,
+      cookie,
+      csrfToken,
+      this.adminSessions,
+      this.adminApiTokens,
+      ['device:control'],
+    );
+
+    return this.commandDispatch.dispatchGenericCommand({
+      deviceId: id,
+      commandType: 'stop_server_tunnel',
+      requestedCommandId: commandId,
+      payload: { serverId: String(serverId || '').trim() },
+      principal,
+    });
+  }
+
   @Post('devices/:id/request-restart-server-ssh')
   requestRestartServerSsh(
     @Param('id') id: string,

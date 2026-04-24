@@ -3,7 +3,19 @@ import type { DeviceSummary } from '../types/device';
 export type RuntimeSummary = {
   deviceId?: string;
   updatedAt?: string;
-  functions?: Record<string, { state?: string; message?: string }>;
+  functions?: Record<string, { state?: string; message?: string; sessionId?: string | null }>;
+  inventory?: {
+    servers?: InventoryServer[];
+  };
+};
+
+export type InventoryServer = {
+  id?: string;
+  name?: string;
+  connectionMethod?: string;
+  host?: string;
+  os?: string;
+  sshUser?: string;
 };
 
 export type RecentLogEntry = {
@@ -12,6 +24,17 @@ export type RecentLogEntry = {
   type?: string;
   functionId?: string;
   payload?: unknown;
+};
+
+export type TunnelLogEntry = {
+  ts?: string;
+  sessionId?: string | null;
+  data?: string;
+};
+
+export type TunnelLogsResponse = {
+  entries: TunnelLogEntry[];
+  total: number;
 };
 
 export type CommandHistoryEntry = {
@@ -150,6 +173,7 @@ async function postDeviceRequest(
   deviceId: string,
   path: string,
   failureMessage: string,
+  extraBody?: Record<string, unknown>,
 ): Promise<DeviceCommandResponse> {
   const csrfToken = getAdminCsrfToken();
   const response = await fetch(`/v1/devices/${encodeURIComponent(deviceId)}/${path}`, {
@@ -160,6 +184,7 @@ async function postDeviceRequest(
     },
     body: JSON.stringify({
       csrfToken,
+      ...(extraBody || {}),
     }),
   });
 
@@ -247,6 +272,41 @@ export async function requestRecentLogs(deviceId: string): Promise<DeviceCommand
   return postDeviceRequest(deviceId, 'request-recent-logs', 'Failed to request recent logs');
 }
 
+export async function requestRestartOpenvpn(deviceId: string): Promise<DeviceCommandResponse> {
+  return postDeviceRequest(deviceId, 'request-restart-openvpn', 'Failed to request OpenVPN restart');
+}
+
+export async function requestRestartBoundaryAuth(deviceId: string): Promise<DeviceCommandResponse> {
+  return postDeviceRequest(deviceId, 'request-restart-boundary-auth', 'Failed to request Boundary auth restart');
+}
+
+export async function requestRestartServerTunnel(deviceId: string, serverId: string): Promise<DeviceCommandResponse> {
+  return postDeviceRequest(
+    deviceId,
+    'request-restart-server-tunnel',
+    'Failed to request server tunnel restart',
+    { serverId },
+  );
+}
+
+export async function requestStartServerTunnel(deviceId: string, serverId: string): Promise<DeviceCommandResponse> {
+  return postDeviceRequest(
+    deviceId,
+    'request-start-server-tunnel',
+    'Failed to request server tunnel start',
+    { serverId },
+  );
+}
+
+export async function requestStopServerTunnel(deviceId: string, serverId: string): Promise<DeviceCommandResponse> {
+  return postDeviceRequest(
+    deviceId,
+    'request-stop-server-tunnel',
+    'Failed to request server tunnel stop',
+    { serverId },
+  );
+}
+
 export async function fetchRecentLogs(deviceId: string, limit = 20): Promise<RecentLogEntry[]> {
   const response = await fetch(`/v1/logs?deviceId=${encodeURIComponent(deviceId)}&limit=${limit}`, {
     credentials: 'same-origin',
@@ -258,6 +318,26 @@ export async function fetchRecentLogs(deviceId: string, limit = 20): Promise<Rec
 
   const payload = await parseJsonOrThrow<RecentLogEntry[]>(response, 'Failed to parse recent logs response');
   return Array.isArray(payload) ? payload : [];
+}
+
+export async function fetchTunnelLogs(deviceId: string, serverId: string, limit = 200, offset = 0): Promise<TunnelLogsResponse> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const response = await fetch(
+    `/v1/devices/${encodeURIComponent(deviceId)}/tunnels/${encodeURIComponent(serverId)}/logs?${params}`,
+    {
+      credentials: 'same-origin',
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error('Failed to load tunnel logs');
+  }
+
+  const payload = await parseJsonOrThrow<TunnelLogsResponse>(response, 'Failed to parse tunnel logs response');
+  return {
+    entries: Array.isArray(payload.entries) ? payload.entries : [],
+    total: typeof payload.total === 'number' ? payload.total : 0,
+  };
 }
 
 export async function fetchCommands(deviceId: string, limit = 20): Promise<CommandHistoryEntry[]> {
@@ -395,6 +475,10 @@ export function subscribeTelemetryStream(deviceId: string, onMessage: () => void
 
 export function subscribeTransfersStream(deviceId: string, onMessage: () => void): StreamSubscription {
   return subscribeStream(`/v1/file-transfers/stream?deviceId=${encodeURIComponent(deviceId)}`, onMessage);
+}
+
+export function subscribeCommandsStream(deviceId: string, onMessage: () => void): StreamSubscription {
+  return subscribeStream(`/v1/commands/stream?deviceId=${encodeURIComponent(deviceId)}`, onMessage);
 }
 
 export function buildTelemetryExportUrl(deviceId: string, filters: TelemetryFilters = {}): string {

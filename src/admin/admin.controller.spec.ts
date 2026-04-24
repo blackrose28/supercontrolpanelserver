@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { AdminController } from './admin.controller';
 
 describe('AdminController admin pages', () => {
@@ -45,6 +45,10 @@ describe('AdminController admin pages', () => {
     );
   });
 
+  afterEach(() => {
+    delete process.env.CC_ADMIN_PASSWORD;
+  });
+
   function createRes() {
     return {
       redirect: vi.fn(),
@@ -52,6 +56,18 @@ describe('AdminController admin pages', () => {
       cookie: vi.fn(),
     } as any;
   }
+
+  it('redirects to root after successful login', () => {
+    const res = createRes();
+    const csrfCookie = 'cc_admin_csrf=test-token';
+    process.env.CC_ADMIN_PASSWORD = 'admin';
+    adminSessions.createSession = vi.fn(() => 'session-token');
+    adminSessions.getTtlMs = vi.fn(() => 60_000);
+
+    controller.login('admin', 'test-token', csrfCookie, res);
+
+    expect(res.redirect).toHaveBeenCalledWith('/');
+  });
 
   it('keeps /admin/devices behavior for unauthorized requests', () => {
     adminSessions.isValid.mockReturnValue(false);

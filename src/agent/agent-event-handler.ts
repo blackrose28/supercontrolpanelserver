@@ -513,6 +513,46 @@ export function handleAgentRecentLogs(input: {
     payload: envelope.payload ?? null,
   });
 
+  // Expand individual events from recent_logs so they populate
+  // the runtime summary and become queryable (e.g. pty-output by sessionId).
+  const payload =
+    envelope.payload && typeof envelope.payload === 'object'
+      ? (envelope.payload as Record<string, unknown>)
+      : {};
+  const recentEvents = Array.isArray(payload.events) ? payload.events : [];
+  for (const evt of recentEvents) {
+    const evtRecord =
+      evt && typeof evt === 'object'
+        ? (evt as Record<string, unknown>)
+        : {};
+    logStore.append({
+      id: randomUUID(),
+      deviceId: client.deviceId,
+      type: typeof evtRecord.type === 'string' ? evtRecord.type : 'unknown',
+      sessionId:
+        typeof evtRecord.sessionId === 'string'
+          ? evtRecord.sessionId
+          : evtRecord.sessionId == null
+            ? null
+            : client.sessionId ?? null,
+      functionId:
+        typeof evtRecord.functionId === 'string'
+          ? evtRecord.functionId
+          : evtRecord.functionId == null
+            ? null
+            : null,
+      seq: typeof evtRecord.seq === 'number' ? evtRecord.seq : Date.now(),
+      ts:
+        typeof evtRecord.ts === 'string' && evtRecord.ts.trim()
+          ? evtRecord.ts
+          : envelope.ts || new Date().toISOString(),
+      payload:
+        evtRecord.payload !== undefined && evtRecord.payload !== null
+          ? evtRecord.payload
+          : null,
+    });
+  }
+
   sendMessage(client, {
     type: 'ack',
     reqSeq: envelope.seq,

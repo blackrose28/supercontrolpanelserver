@@ -31,6 +31,12 @@ export function AdminDashboardPage() {
     recentLogs,
     recentLogsLoading,
     recentLogsError,
+    selectedTunnelServerId,
+    tunnelLogs,
+    tunnelLogsLoading,
+    tunnelLogsError,
+    tunnelLogsTotal,
+    loadMoreTunnelLogs,
     commands,
     commandsLoading,
     commandsError,
@@ -77,6 +83,12 @@ export function AdminDashboardPage() {
     refreshTelemetry,
     selectDevice,
     requestRecentLogs,
+    selectTunnelServer,
+    refreshTunnelLogs,
+    requestRestartOpenvpn,
+    requestRestartBoundaryAuth,
+    requestStartServerTunnel,
+    requestStopServerTunnel,
     requestStatusSnapshot,
     retryRuntimeSummary,
     retryRecentLogs,
@@ -116,10 +128,23 @@ export function AdminDashboardPage() {
 
   function renderExpandedDeviceContent(deviceId: string) {
     const effectiveDeviceId = selectedDeviceId === deviceId ? selectedDeviceId : deviceId;
+    const deviceName = devices.find((device) => device.id === deviceId)?.name || deviceId;
+    const activeTabLabel = tabs.find((tab) => tab.id === activeTab)?.label || 'Device Details';
 
     return (
-      <div className="device-tabs-shell">
-        <div className="device-tabs-bar" role="tablist" aria-label={`Device panels for ${deviceId}`}>
+      <div className="device-tabs-shell device-tabs-shell-mobile-ready">
+        <div className="device-workspace-header">
+          <div>
+            <p className="device-workspace-eyebrow">Device workspace</p>
+            <h3 className="device-workspace-title">{deviceName}</h3>
+            <p className="device-workspace-subtitle">Browsing panels for {deviceName}.</p>
+          </div>
+          <div className="device-workspace-meta">
+            <span className="device-workspace-meta-label">Active panel</span>
+            <strong>{activeTabLabel}</strong>
+          </div>
+        </div>
+        <div className="device-tabs-bar device-tabs-bar-scroll" role="tablist" aria-label={`Device panels for ${deviceId}`}>
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -135,9 +160,7 @@ export function AdminDashboardPage() {
             </button>
           ))}
         </div>
-        <div
-          className="device-tab-panels"
-        >
+        <div className="device-tab-panels device-tab-panels-stack">
           <div
             id="device-tabpanel-details"
             className={`device-tab-panel${activeTab === 'details' ? ' active' : ' inactive'}`}
@@ -163,6 +186,17 @@ export function AdminDashboardPage() {
               runtimeSummaryLoading={runtimeSummaryLoading}
               runtimeSummaryError={runtimeSummaryError}
               runtimeSummary={runtimeSummary}
+              deviceActionLoadingId={deviceActionLoadingId}
+              selectedTunnelServerId={selectedTunnelServerId}
+              tunnelLogs={tunnelLogs}
+              tunnelLogsLoading={tunnelLogsLoading}
+              tunnelLogsError={tunnelLogsError}
+              tunnelLogsTotal={tunnelLogsTotal}
+              onLoadMoreTunnelLogs={loadMoreTunnelLogs}
+              onSelectTunnelServer={selectTunnelServer}
+              onRefreshTunnelLogs={refreshTunnelLogs}
+              onRequestStartServerTunnel={requestStartServerTunnel}
+              onRequestStopServerTunnel={requestStopServerTunnel}
               onRetry={retryRuntimeSummary}
             />
           </div>
@@ -272,6 +306,8 @@ export function AdminDashboardPage() {
         onViewLogs={handleViewLogs}
         onRequestSnapshot={requestStatusSnapshot}
         onRequestRecentLogs={requestRecentLogs}
+        onRequestRestartOpenvpn={requestRestartOpenvpn}
+        onRequestRestartBoundaryAuth={requestRestartBoundaryAuth}
         deviceActionLoadingId={deviceActionLoadingId}
         deviceActionError={deviceActionError}
         expandedDeviceId={expandedDeviceId}

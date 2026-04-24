@@ -97,6 +97,42 @@ describe('AgentGateway request methods', () => {
     expect(sentPayload.payload).toEqual({ serverId: 'srv-1' });
   });
 
+  it('requestStartServerTunnel sends request envelope and server id', () => {
+    deviceStore.getSessionByDeviceId.mockReturnValue({ ws });
+
+    const result = gateway.requestStartServerTunnel('device-1', 'srv-1', 'cmd-start');
+
+    expect(result).toMatchObject({
+      ok: true,
+      deviceId: 'device-1',
+      serverId: 'srv-1',
+      reqSeq: 1,
+    });
+
+    const sentPayload = JSON.parse(String(ws.send.mock.calls[0][0]));
+    expect(sentPayload.type).toBe('request_start_server_tunnel');
+    expect(sentPayload.commandId).toBe('cmd-start');
+    expect(sentPayload.payload).toEqual({ serverId: 'srv-1' });
+  });
+
+  it('requestStopServerTunnel sends request envelope and server id', () => {
+    deviceStore.getSessionByDeviceId.mockReturnValue({ ws });
+
+    const result = gateway.requestStopServerTunnel('device-1', 'srv-2', 'cmd-stop');
+
+    expect(result).toMatchObject({
+      ok: true,
+      deviceId: 'device-1',
+      serverId: 'srv-2',
+      reqSeq: 1,
+    });
+
+    const sentPayload = JSON.parse(String(ws.send.mock.calls[0][0]));
+    expect(sentPayload.type).toBe('request_stop_server_tunnel');
+    expect(sentPayload.commandId).toBe('cmd-stop');
+    expect(sentPayload.payload).toEqual({ serverId: 'srv-2' });
+  });
+
   it('openPty tracks pending open request and creates opening session', () => {
     deviceStore.getSessionByDeviceId.mockReturnValue({ ws });
 
@@ -410,6 +446,70 @@ describe('AgentGateway request methods', () => {
       'request_recent_logs',
       '2026-01-01T00:00:00.000Z',
       'recent logs received',
+    );
+  });
+
+  it('handleRecentLogs expands individual events from recent_logs payload', () => {
+    (gateway as any).handleRecentLogs(
+      {
+        seq: 40,
+        ts: '2026-01-01T00:00:00.000Z',
+        payload: {
+          count: 2,
+          events: [
+            {
+              type: 'function-status',
+              sessionId: 'pty-recent-1',
+              functionId: 'server-tunnel-srv-expand-test',
+              seq: 100,
+              ts: '2026-01-01T00:00:01.000Z',
+              payload: {
+                functionId: 'server-tunnel-srv-expand-test',
+                state: 'running',
+                message: 'Tunnel active',
+                sessionId: 'pty-recent-1',
+                updatedAtMs: 1700000000000,
+              },
+            },
+            {
+              type: 'pty-output',
+              sessionId: 'pty-recent-1',
+              functionId: null,
+              seq: 101,
+              ts: '2026-01-01T00:00:02.000Z',
+              payload: { id: 'pty-recent-1', data: 'recent tunnel output\r\n' },
+            },
+          ],
+        },
+      },
+      { deviceId: 'device-1', sessionId: 'sess-1', send: ws.send },
+    );
+
+    // Should have the original recent_logs append + 2 expanded events
+    const appendCalls = logStore.append.mock.calls;
+    const expandedCalls = appendCalls.filter(
+      (call: any[]) => call[0].type === 'function-status' || call[0].type === 'pty-output',
+    );
+    expect(expandedCalls.length).toBe(2);
+
+    const fsCall = expandedCalls.find((c: any[]) => c[0].type === 'function-status');
+    expect(fsCall[0].functionId).toBe('server-tunnel-srv-expand-test');
+    expect(fsCall[0].sessionId).toBe('pty-recent-1');
+    expect(fsCall[0].payload).toEqual(
+      expect.objectContaining({
+        functionId: 'server-tunnel-srv-expand-test',
+        state: 'running',
+        sessionId: 'pty-recent-1',
+      }),
+    );
+
+    const ptyCall = expandedCalls.find((c: any[]) => c[0].type === 'pty-output');
+    expect(ptyCall[0].sessionId).toBe('pty-recent-1');
+    expect(ptyCall[0].payload).toEqual(
+      expect.objectContaining({
+        id: 'pty-recent-1',
+        data: 'recent tunnel output\r\n',
+      }),
     );
   });
 

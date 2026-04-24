@@ -122,6 +122,46 @@ export function requestRestartServerTunnel(deps: RequestDeps, deviceId: string, 
   return { ok: true, deviceId, serverId: normalizedServerId, reqSeq: envelope.seq, requestedAt: envelope.ts };
 }
 
+export function requestStartServerTunnel(deps: RequestDeps, deviceId: string, serverId: string, commandId?: string) {
+  const session = deps.deviceStore.getSessionByDeviceId(deviceId);
+  if (!session?.ws) {
+    return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
+  }
+
+  const normalizedServerId = String(serverId || '').trim();
+  if (!normalizedServerId) {
+    return { ok: false, reason: 'SERVER_ID_REQUIRED' };
+  }
+
+  const envelope = deps.sendMessage(session.ws, {
+    type: 'request_start_server_tunnel',
+    commandId,
+    payload: { serverId: normalizedServerId },
+  });
+
+  return { ok: true, deviceId, serverId: normalizedServerId, reqSeq: envelope.seq, requestedAt: envelope.ts };
+}
+
+export function requestStopServerTunnel(deps: RequestDeps, deviceId: string, serverId: string, commandId?: string) {
+  const session = deps.deviceStore.getSessionByDeviceId(deviceId);
+  if (!session?.ws) {
+    return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
+  }
+
+  const normalizedServerId = String(serverId || '').trim();
+  if (!normalizedServerId) {
+    return { ok: false, reason: 'SERVER_ID_REQUIRED' };
+  }
+
+  const envelope = deps.sendMessage(session.ws, {
+    type: 'request_stop_server_tunnel',
+    commandId,
+    payload: { serverId: normalizedServerId },
+  });
+
+  return { ok: true, deviceId, serverId: normalizedServerId, reqSeq: envelope.seq, requestedAt: envelope.ts };
+}
+
 export function requestRestartServerSsh(deps: RequestDeps, deviceId: string, serverId: string, commandId?: string) {
   const session = deps.deviceStore.getSessionByDeviceId(deviceId);
   if (!session?.ws) {

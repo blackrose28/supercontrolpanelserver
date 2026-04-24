@@ -1,5 +1,6 @@
 import { Fragment, useState, type ReactNode } from 'react';
 import type { DeviceSummary } from '../types/device';
+import { formatTimestamp } from '../utils/formatTimestamp';
 
 type DeviceListSectionProps = {
   devices: DeviceSummary[];
@@ -10,6 +11,8 @@ type DeviceListSectionProps = {
   onViewLogs: (deviceId: string) => void;
   onRequestSnapshot: (deviceId: string) => void;
   onRequestRecentLogs: (deviceId: string) => void;
+  onRequestRestartOpenvpn: (deviceId: string) => void;
+  onRequestRestartBoundaryAuth: (deviceId: string) => void;
   deviceActionLoadingId: string | null;
   deviceActionError: string | null;
   expandedDeviceId?: string | null;
@@ -25,6 +28,8 @@ export function DeviceListSection({
   onViewLogs,
   onRequestSnapshot,
   onRequestRecentLogs,
+  onRequestRestartOpenvpn,
+  onRequestRestartBoundaryAuth,
   deviceActionLoadingId,
   deviceActionError,
   expandedDeviceId,
@@ -37,11 +42,25 @@ export function DeviceListSection({
   }
 
   return (
-    <section>
-      <h2>Devices</h2>
-      <button type="button" onClick={onRefresh} disabled={loading}>
-        Refresh devices
-      </button>
+    <section className="device-list-section">
+      <div className="device-list-header">
+        <div>
+          <h2>Devices</h2>
+          <p className="device-list-subtitle">Pull the latest device status and runtime activity.</p>
+        </div>
+        <button
+          type="button"
+          className="device-refresh-button"
+          onClick={onRefresh}
+          disabled={loading}
+          aria-label={loading ? 'Refreshing devices' : 'Refresh devices'}
+        >
+          <span className="device-refresh-button-icon" aria-hidden="true">
+            ↻
+          </span>
+          <span>{loading ? 'Refreshing devices…' : 'Refresh devices'}</span>
+        </button>
+      </div>
       {loading ? <p>Loading devices…</p> : null}
       {error ? <p>{error}</p> : null}
       {deviceActionError ? <p>{deviceActionError}</p> : null}
@@ -64,7 +83,7 @@ export function DeviceListSection({
                     <td data-label="Name">{device.name}</td>
                     <td data-label="Status">{device.status}</td>
                     <td data-label="OS">{device.os || '-'}</td>
-                    <td data-label="Last Seen">{device.lastSeenAt || '-'}</td>
+                    <td data-label="Last Seen">{formatTimestamp(device.lastSeenAt)}</td>
                     <td data-label="Actions">
                       <div className="device-actions-cell">
                         <button
@@ -117,6 +136,28 @@ export function DeviceListSection({
                               }}
                             >
                               {deviceActionLoadingId === device.id ? 'Requesting…' : 'Request snapshot'}
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              disabled={deviceActionLoadingId === device.id}
+                              onClick={() => {
+                                setOpenMenuDeviceId(null);
+                                onRequestRestartOpenvpn(device.id);
+                              }}
+                            >
+                              {deviceActionLoadingId === device.id ? 'Requesting…' : 'Restart OpenVPN'}
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              disabled={deviceActionLoadingId === device.id}
+                              onClick={() => {
+                                setOpenMenuDeviceId(null);
+                                onRequestRestartBoundaryAuth(device.id);
+                              }}
+                            >
+                              {deviceActionLoadingId === device.id ? 'Requesting…' : 'Restart Boundary Auth'}
                             </button>
                           </div>
                         ) : null}

@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Headers, HttpException, HttpStatus, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpException, HttpStatus, MessageEvent, Param, Post, Query, Sse } from '@nestjs/common';
 import { requireAdminAuthorized, requireAdminMutationAuthorized } from '../admin/admin-auth';
 import { AdminSessionService } from '../admin/admin-session.service';
 import { AdminApiTokenService } from '../admin/admin-api-token.service';
-import { CommandStore } from './command.store';
+import { Observable, concat, from, map } from 'rxjs';
+import { CommandStore, type CommandRecord } from './command.store';
 import { DeviceStore } from '../devices/device.store';
 import { CommandDispatchService } from './command-dispatch.service';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
@@ -84,6 +85,33 @@ export class CommandsController {
     };
   }
 
+  @Sse('commands/stream')
+  streamCommands(
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+    @Query('deviceId') deviceId?: string,
+    @Query('limit') limit?: string,
+  ): Observable<MessageEvent> {
+    requireAdminAuthorized(auth, cookie, this.adminSessions, this.adminApiTokens, ['device:read']);
+
+    const normalizedDeviceId = deviceId?.trim();
+    if (!normalizedDeviceId) {
+      throw new HttpException('deviceId is required', HttpStatus.BAD_REQUEST);
+    }
+    if (!this.deviceStore.getDevice(normalizedDeviceId)) {
+      throw new HttpException('Device not found', HttpStatus.NOT_FOUND);
+    }
+
+    const resolvedLimit = Math.min(Math.max(Number(limit) || 20, 1), 200);
+    const backlog$ = from(
+      this.commandStore.listCommands({ deviceId: normalizedDeviceId, limit: resolvedLimit }),
+    ).pipe(map((record) => this.toCommandSse(record)));
+    const live$ = this.commandStore
+      .streamByDevice(normalizedDeviceId)
+      .pipe(map((record) => this.toCommandSse(record)));
+    return concat(backlog$, live$);
+  }
+
   @Get('commands/:commandId')
   getCommand(
     @Param('commandId') commandId: string,
@@ -126,6 +154,13 @@ export class CommandsController {
     return {
       commandId: normalizedCommandId,
       items: this.commandStore.listAudit(normalizedCommandId),
+    };
+  }
+
+  private toCommandSse(record: CommandRecord): MessageEvent {
+    return {
+      type: 'command',
+      data: record,
     };
   }
 }

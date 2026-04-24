@@ -200,7 +200,7 @@ describe('App shell', () => {
       expect(screen.getByText('request_status_snapshot')).toBeInTheDocument();
       expect(screen.getByText('Actor: Admin UI')).toBeInTheDocument();
       expect(screen.getByText('Summary: manual refresh')).toBeInTheDocument();
-      expect(screen.getByText('Finished: 2026-04-20T00:01:00.000Z | Result: ok')).toBeInTheDocument();
+      expect(screen.getByText('Finished: 2026-04-20 07:01:00 GMT+7 | Result: ok')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'request_status_snapshot' })).toHaveClass('command-card-button');
     });
 
@@ -1096,7 +1096,7 @@ describe('App shell', () => {
 
     await waitFor(() => {
       expect(screen.getAllByRole('listitem')).not.toHaveLength(0);
-      expect(screen.getAllByText(/2026-04-21T00:00:0/)).not.toHaveLength(0);
+      expect(screen.getAllByText(/2026-04-21 07:00:0[01] GMT\+7/)).not.toHaveLength(0);
     });
 
     const firstTelemetryRow = screen.getAllByText('function_status')[0]?.closest('li');
@@ -1819,6 +1819,87 @@ describe('App shell', () => {
     expect(summary.getAllByText(/running/i).length).toBeGreaterThan(0);
   });
 
+  it('renders visible timestamps in GMT+7 across device details, runtime, logs, commands, transfers, and telemetry', async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/v1/devices') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: '2026-04-18T00:00:00.000Z' }],
+        });
+      }
+      if (url === '/v1/devices/dev-1') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: '2026-04-18T00:00:00.000Z' }),
+        });
+      }
+      if (url === '/v1/device-summary?deviceId=dev-1') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ deviceId: 'dev-1', updatedAt: '2026-04-20T00:00:00.000Z', functions: { 'vpn-agent': { state: 'running' } } }),
+        });
+      }
+      if (url === '/v1/logs?deviceId=dev-1&limit=20') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [{ id: 'log-1', ts: '2026-04-20T00:00:00.000Z', type: 'recent_logs', functionId: 'vpn-agent' }],
+        });
+      }
+      if (url === '/v1/commands?deviceId=dev-1&limit=20') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            items: [
+              {
+                commandId: 'cmd-1',
+                commandType: 'request_recent_logs',
+                state: 'succeeded',
+                submittedAt: '2026-04-20T00:00:00.000Z',
+                finishedAt: '2026-04-20T00:01:00.000Z',
+                actorType: 'admin_session',
+              },
+            ],
+          }),
+        });
+      }
+      if (url === '/v1/commands/cmd-1/audit') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ items: [{ eventType: 'queued', ts: '2026-04-20T00:02:00.000Z', summary: 'Queued' }] }),
+        });
+      }
+      if (url === '/v1/file-transfers?deviceId=dev-1&limit=50') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ items: [{ transferId: 'tr-1', direction: 'upload', state: 'running', sessionId: 'sess-1', updatedAt: '2026-04-21T00:00:00.000Z' }] }),
+        });
+      }
+      if (url === '/v1/logs?deviceId=dev-1&limit=100') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [{ id: 'tlm-1', ts: '2026-04-22T00:00:00.000Z', type: 'function-status', functionId: 'vpn-agent', payload: { ok: true } }],
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText('2026-04-18 07:00:00 GMT+7').length).toBeGreaterThan(0);
+      expect(screen.getByText('Updated: 2026-04-20 07:00:00 GMT+7')).toBeInTheDocument();
+      expect(screen.getAllByText('2026-04-20 07:00:00 GMT+7').length).toBeGreaterThan(0);
+      expect(screen.getByText('Submitted: 2026-04-20 07:00:00 GMT+7')).toBeInTheDocument();
+      expect(screen.getByText('Finished: 2026-04-20 07:01:00 GMT+7')).toBeInTheDocument();
+      expect(screen.getByText(/queued/)).toBeInTheDocument();
+      expect(screen.getByText('2026-04-22 07:00:00 GMT+7')).toBeInTheDocument();
+    });
+  });
+
   it('shows runtime summary error and retries on demand', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => initialDevices })
@@ -1853,6 +1934,120 @@ describe('App shell', () => {
     await waitFor(() => {
       expect(screen.getByText('vpn-agent')).toBeInTheDocument();
       expect(screen.queryByText('Failed to load runtime summary')).not.toBeInTheDocument();
+    });
+  });
+
+
+  it('shows start action for idle tunnel and stop action for running tunnel', async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => initialDevices });
+      if (url === '/v1/devices/dev-1') return Promise.resolve({ ok: true, json: async () => initialDevices[0] });
+      if (url === '/v1/device-summary?deviceId=dev-1') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            deviceId: 'dev-1',
+            updatedAt: '2026-04-20T00:00:00.000Z',
+            functions: {
+              'server-tunnel-srv-2': {
+                state: 'running',
+                message: 'Tunnel active',
+              },
+            },
+            inventory: {
+              servers: [
+                { id: 'srv-1', name: 'Idle Tunnel', connectionMethod: 'boundary', host: '127.0.0.1' },
+                { id: 'srv-2', name: 'Running Tunnel', connectionMethod: 'boundary', host: '127.0.0.2' },
+              ],
+            },
+          }),
+        });
+      }
+      if (url === '/v1/logs?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => [] });
+      if (url === '/v1/commands?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+      if (url === '/v1/logs?deviceId=dev-1&limit=100') return Promise.resolve({ ok: true, json: async () => [] });
+      return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+
+    const summarySection = await screen.findByRole('heading', { name: 'Runtime Summary' });
+    const summary = within(summarySection.closest('section') as HTMLElement);
+
+    await waitFor(() => {
+      expect(summary.getByRole('button', { name: 'Start tunnel for Idle Tunnel' })).toBeInTheDocument();
+      expect(summary.getByRole('button', { name: 'Stop tunnel for Running Tunnel' })).toBeInTheDocument();
+    });
+  });
+
+  it('can load dedicated tunnel logs from runtime summary', async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => initialDevices });
+      if (url === '/v1/devices/dev-1') return Promise.resolve({ ok: true, json: async () => initialDevices[0] });
+      if (url === '/v1/device-summary?deviceId=dev-1') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            deviceId: 'dev-1',
+            updatedAt: '2026-04-20T00:00:00.000Z',
+            functions: {
+              'server-tunnel-srv-1': {
+                state: 'running',
+                message: 'Tunnel active',
+                sessionId: 'sess-1',
+              },
+            },
+            inventory: {
+              servers: [
+                { id: 'srv-1', name: 'Running Tunnel', connectionMethod: 'boundary', host: '127.0.0.1' },
+              ],
+            },
+          }),
+        });
+      }
+      if (url === '/v1/logs?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => [] });
+      if (url === '/v1/commands?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+      if (url === '/v1/logs?deviceId=dev-1&limit=100') return Promise.resolve({ ok: true, json: async () => [] });
+      if (url.includes('/tunnels/srv-1/logs')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            entries: [
+              { ts: '2026-04-23T03:33:23.000Z', sessionId: 'sess-1', data: 'Tunnel connected' },
+              { ts: '2026-04-23T03:33:24.000Z', sessionId: 'sess-1', data: 'Listening on 6222' },
+            ],
+            total: 2,
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+
+    const summarySection = await screen.findByRole('heading', { name: 'Runtime Summary' });
+    const summary = within(summarySection.closest('section') as HTMLElement);
+
+    await waitFor(() => {
+      expect(summary.getByRole('button', { name: 'View logs for Running Tunnel' })).toBeInTheDocument();
+    });
+
+    fireEvent.click(summary.getByRole('button', { name: 'View logs for Running Tunnel' }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/v1/devices/dev-1/tunnels/srv-1/logs?limit=200&offset=0', {
+        credentials: 'same-origin',
+      });
+      expect(summary.getByLabelText('Tunnel logs')).toHaveTextContent('Tunnel connected');
+      expect(summary.getByLabelText('Tunnel logs')).toHaveTextContent('Listening on 6222');
     });
   });
 
@@ -2006,7 +2201,7 @@ describe('App shell', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('2026-04-20T00:01:00.000Z')).toBeInTheDocument();
+      expect(screen.getByText('2026-04-20 07:01:00 GMT+7')).toBeInTheDocument();
       expect(screen.queryByText('Failed to load recent logs')).not.toBeInTheDocument();
     });
   });

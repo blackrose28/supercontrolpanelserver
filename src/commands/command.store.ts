@@ -1,3 +1,4 @@
+import { Observable, Subject, filter } from 'rxjs';
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { redactTelemetryPayload } from '../logs/log-redaction';
@@ -32,6 +33,8 @@ export type SafeCommandType =
   | 'request_recent_logs'
   | 'restart_openvpn'
   | 'restart_boundary_auth'
+  | 'start_server_tunnel'
+  | 'stop_server_tunnel'
   | 'restart_server_tunnel'
   | 'restart_server_ssh'
   | 'open_remote_browser'
@@ -101,6 +104,8 @@ const TERMINAL_STATES = new Set<CommandState>(['succeeded', 'failed', 'canceled'
 
 @Injectable()
 export class CommandStore {
+  private readonly stream = new Subject<CommandRecord>();
+
   constructor(private readonly databaseService: DatabaseService) {}
 
   createQueuedCommand(input: CreateCommandInput): CommandRecord {
@@ -129,7 +134,9 @@ export class CommandStore {
         submittedAt: input.submittedAt,
       });
 
-    return this.getRequiredCommand(input.commandId);
+    const record = this.getRequiredCommand(input.commandId);
+    this.stream.next(record);
+    return record;
   }
 
   markDispatched(commandId: string, reqSeq: number, dispatchedAt: string): CommandRecord {
@@ -149,7 +156,9 @@ export class CommandStore {
         dispatchedAt,
       });
 
-    return this.getRequiredCommand(commandId);
+    const record = this.getRequiredCommand(commandId);
+    this.stream.next(record);
+    return record;
   }
 
   markFailed(
@@ -177,7 +186,9 @@ export class CommandStore {
         reasonDetail,
       });
 
-    return this.getRequiredCommand(commandId);
+    const record = this.getRequiredCommand(commandId);
+    this.stream.next(record);
+    return record;
   }
 
   markExecuting(commandId: string, executingAt: string): CommandRecord {
@@ -200,7 +211,9 @@ export class CommandStore {
         executingAt,
       });
 
-    return this.getRequiredCommand(commandId);
+    const record = this.getRequiredCommand(commandId);
+    this.stream.next(record);
+    return record;
   }
 
   markSucceeded(commandId: string, outcome: string | null, finishedAt: string): CommandRecord {
@@ -227,7 +240,9 @@ export class CommandStore {
         outcome,
       });
 
-    return this.getRequiredCommand(commandId);
+    const record = this.getRequiredCommand(commandId);
+    this.stream.next(record);
+    return record;
   }
 
   appendAudit(entry: {
@@ -337,6 +352,12 @@ export class CommandStore {
       .get(...params) as { found?: number } | undefined;
 
     return !!row?.found;
+  }
+
+  streamByDevice(deviceId: string): Observable<CommandRecord> {
+    return this.stream.asObservable().pipe(
+      filter((record) => record.deviceId === deviceId),
+    );
   }
 
   getCommand(commandId: string): CommandRecord | undefined {

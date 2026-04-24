@@ -110,7 +110,7 @@ export class AdminController {
       path: '/',
       maxAge: this.adminSessions.getTtlMs(),
     });
-    res.redirect('/admin/devices');
+    res.redirect('/');
   }
 
   @Post('logout')

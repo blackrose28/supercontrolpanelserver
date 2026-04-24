@@ -18,6 +18,9 @@ function HookHarness() {
         onViewLogs={model.selectDevice}
         onRequestSnapshot={model.requestStatusSnapshot}
         onRequestRecentLogs={model.requestRecentLogs}
+        onRequestRestartOpenvpn={model.requestRestartOpenvpn}
+        onRequestRestartBoundaryAuth={model.requestRestartBoundaryAuth}
+        onRequestRestartServerTunnel={() => {}}
         deviceActionLoadingId={model.deviceActionLoadingId}
         deviceActionError={model.deviceActionError}
       />
@@ -30,6 +33,28 @@ function HookHarness() {
       <button type="button" onClick={() => model.requestRecentLogs('dev-1')}>
         Request recent logs dev-1
       </button>
+      <button type="button" onClick={() => model.requestRestartBoundaryAuth('dev-1')}>
+        Request restart boundary auth dev-1
+      </button>
+      <button type="button" onClick={() => model.requestStartServerTunnel('dev-1', 'srv-1')}>
+        Request start server tunnel dev-1 srv-1
+      </button>
+      <button type="button" onClick={() => model.requestStopServerTunnel('dev-1', 'srv-1')}>
+        Request stop server tunnel dev-1 srv-1
+      </button>
+      <button type="button" onClick={() => model.selectTunnelServer('srv-1')}>
+        View tunnel logs dev-1 srv-1
+      </button>
+      <button type="button" onClick={model.refreshTunnelLogs}>
+        Refresh tunnel logs
+      </button>
+      <p>Selected tunnel server: {model.selectedTunnelServerId || '-'}</p>
+      <p>Tunnel logs loading: {model.tunnelLogsLoading ? 'yes' : 'no'}</p>
+      <p>Tunnel logs count: {model.tunnelLogs.length}</p>
+      {model.tunnelLogs.map((entry, index) => (
+        <p key={`${entry.ts || 'log'}-${index}`}>Tunnel log: {entry.data}</p>
+      ))}
+      {model.tunnelLogsError ? <p>{model.tunnelLogsError}</p> : null}
       <button type="button" onClick={model.retryRuntimeSummary}>
         Retry runtime summary
       </button>
@@ -627,6 +652,167 @@ describe('useAdminDashboard', () => {
       expect(fetchMock).toHaveBeenCalledWith('/v1/logs?deviceId=dev-1&limit=20', {
         credentials: 'same-origin',
       });
+    });
+  });
+
+  it('requests restart boundary auth and refreshes commands', async () => {
+    vi.spyOn(document, 'querySelector').mockImplementation((selector: string) => {
+      if (selector === 'meta[name="csrf-token"]') {
+        return {
+          getAttribute: () => 'csrf-456',
+        } as unknown as Element;
+      }
+
+      return null;
+    });
+
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
+      if (url === '/v1/devices/dev-1') return Promise.resolve({ ok: true, json: async () => ({ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }) });
+      if (url === '/v1/device-summary?deviceId=dev-1') return Promise.resolve({ ok: true, json: async () => ({ deviceId: 'dev-1', updatedAt: '2026-04-20T00:00:00.000Z', functions: {} }) });
+      if (url === '/v1/logs?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => [{ id: 'log-1', type: 'function_status' }] });
+      if (url === '/v1/commands?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+      if (url === '/v1/logs?deviceId=dev-1&limit=100') return Promise.resolve({ ok: true, json: async () => [] });
+      if (url === '/v1/devices/dev-1/request-restart-boundary-auth' && init?.method === 'POST') {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, command: { commandId: 'cmd-3' } }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    render(<HookHarness />);
+    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Request restart boundary auth dev-1' }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/v1/devices/dev-1/request-restart-boundary-auth', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csrfToken: 'csrf-456' }),
+      });
+    });
+  });
+
+
+  it('requests start server tunnel and refreshes runtime summary', async () => {
+    vi.spyOn(document, 'querySelector').mockImplementation((selector: string) => {
+      if (selector === 'meta[name="csrf-token"]') {
+        return {
+          getAttribute: () => 'csrf-start',
+        } as unknown as Element;
+      }
+
+      return null;
+    });
+
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
+      if (url === '/v1/devices/dev-1/request-start-server-tunnel' && init?.method === 'POST') {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, command: { commandId: 'cmd-5' } }) });
+      }
+      if (url === '/v1/device-summary?deviceId=dev-1') {
+        return Promise.resolve({ ok: true, json: async () => ({ deviceId: 'dev-1', updatedAt: '2026-04-23T10:00:00.000Z', functions: { 'server-tunnel-srv-1': { state: 'running', sessionId: 'sess-new' } }, inventory: {} }) });
+      }
+      if (url === '/v1/commands?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+      return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    render(<HookHarness />);
+    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Request start server tunnel dev-1 srv-1' }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/v1/devices/dev-1/request-start-server-tunnel', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csrfToken: 'csrf-start', serverId: 'srv-1' }),
+      });
+    });
+
+    // Should have refreshed runtime summary after starting tunnel
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/v1/device-summary?deviceId=dev-1', {
+        credentials: 'same-origin',
+      });
+    });
+  });
+
+  it('requests stop server tunnel and refreshes runtime summary', async () => {
+    vi.spyOn(document, 'querySelector').mockImplementation((selector: string) => {
+      if (selector === 'meta[name="csrf-token"]') {
+        return {
+          getAttribute: () => 'csrf-stop',
+        } as unknown as Element;
+      }
+
+      return null;
+    });
+
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
+      if (url === '/v1/devices/dev-1/request-stop-server-tunnel' && init?.method === 'POST') {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, command: { commandId: 'cmd-6' } }) });
+      }
+      if (url === '/v1/device-summary?deviceId=dev-1') {
+        return Promise.resolve({ ok: true, json: async () => ({ deviceId: 'dev-1', updatedAt: '2026-04-23T10:00:00.000Z', functions: { 'server-tunnel-srv-1': { state: 'idle' } }, inventory: {} }) });
+      }
+      if (url === '/v1/commands?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+      return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    render(<HookHarness />);
+    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Request stop server tunnel dev-1 srv-1' }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/v1/devices/dev-1/request-stop-server-tunnel', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csrfToken: 'csrf-stop', serverId: 'srv-1' }),
+      });
+    });
+
+    // Should have refreshed runtime summary after stopping tunnel
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/v1/device-summary?deviceId=dev-1', {
+        credentials: 'same-origin',
+      });
+    });
+  });
+
+  it('loads tunnel logs for the selected tunnel server', async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
+      if (url === '/v1/devices/dev-1') return Promise.resolve({ ok: true, json: async () => ({ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }) });
+      if (url === '/v1/device-summary?deviceId=dev-1') return Promise.resolve({ ok: true, json: async () => ({ deviceId: 'dev-1', updatedAt: '2026-04-20T00:00:00.000Z', functions: { 'server-tunnel-srv-1': { state: 'running', sessionId: 'sess-1' } }, inventory: { servers: [{ id: 'srv-1', name: 'Boundary Bastion', connectionMethod: 'boundary' }] } }) });
+      if (url === '/v1/logs?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => [] });
+      if (url === '/v1/commands?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+      if (url === '/v1/logs?deviceId=dev-1&limit=100') return Promise.resolve({ ok: true, json: async () => [] });
+      if (url.includes('/tunnels/srv-1/logs')) return Promise.resolve({ ok: true, json: async () => ({ entries: [{ ts: '2026-04-23T03:33:23.000Z', sessionId: 'sess-1', data: 'Tunnel ready' }], total: 1 }) });
+      return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    render(<HookHarness />);
+    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View tunnel logs dev-1 srv-1' }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/v1/devices/dev-1/tunnels/srv-1/logs?limit=200&offset=0', {
+        credentials: 'same-origin',
+      });
+      expect(screen.getByText('Selected tunnel server: srv-1')).toBeInTheDocument();
+      expect(screen.getByText('Tunnel log: Tunnel ready')).toBeInTheDocument();
     });
   });
 

@@ -1,4 +1,5 @@
 import type { TransferEntry } from '../api/adminApi';
+import { formatTimestamp } from '../utils/formatTimestamp';
 
 type TransfersSectionProps = {
   selectedDeviceId: string | null;
@@ -128,13 +129,22 @@ export function TransfersSection({
 }: TransfersSectionProps) {
   return (
     <section className="panel-section transfers-section">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2>Transfer Activity</h2>
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+      <div className="transfers-section-header">
+        <div>
+          <h2>Transfer Activity</h2>
+          <p className="transfers-section-subtitle">
+            Monitor active transfers, stalled work, and recovery actions from one place.
+          </p>
+        </div>
+        <div className="transfers-toolbar">
           {selectedDeviceId ? (
-            <label style={{ fontSize: '0.9rem' }}>
-              Show:{' '}
+            <>
+              <p className="transfers-toolbar-caption">Showing up to {transfersLimit} transfers</p>
+              <label className="transfers-toolbar-label toolbar-limit-field">
+                Show:{' '}
               <select
+                aria-label="Transfer history limit"
+                className="transfers-toolbar-select"
                 value={transfersLimit}
                 onChange={(e) => onLimitChange(Number(e.target.value))}
                 disabled={transfersLoading}
@@ -143,13 +153,14 @@ export function TransfersSection({
                 <option value={100}>100</option>
                 <option value={200}>200</option>
               </select>
-            </label>
+              </label>
+            </>
           ) : null}
-          <button className="panel-refresh-button" type="button" onClick={onRefresh} disabled={!selectedDeviceId || transfersLoading}>
+          <button className="transfers-toolbar-button" type="button" onClick={onRefresh} disabled={!selectedDeviceId || transfersLoading}>
             Refresh transfers
           </button>
           <button
-            className="panel-refresh-button"
+            className="transfers-toolbar-button"
             type="button"
             onClick={onDismissFinished}
             disabled={!selectedDeviceId || transfersLoading || transferActionLoading || !transfers.some(canDismiss)}
@@ -163,14 +174,16 @@ export function TransfersSection({
       {transfersError ? <p>{transfersError}</p> : null}
       {selectedDeviceId && !transfersLoading && !transfersError ? (
         transfers.length > 0 ? (
-          <ul>
+          <>
+            <div className="transfers-list-heading">Transfer queue</div>
+            <ul>
             {transfers.map((entry) => (
               <li key={entry.transferId} className="transfer-card">
                 <div className="transfer-card-head">
                   <strong>{entry.direction || '-'}</strong>
                   <span className="transfer-state-badge">{entry.state || '-'}</span>
                 </div>
-                <div className="transfer-card-meta">Updated: {entry.updatedAt || '-'}</div>
+                <div className="transfer-card-meta">Updated: {formatTimestamp(entry.updatedAt)}</div>
                 {entry.phase ? <div className="transfer-card-meta">Phase: {entry.phase}</div> : null}
                 {formatProgress(entry.percent) ? <div className="transfer-card-meta">{formatProgress(entry.percent)}</div> : null}
                 {formatTransferred(entry.bytesTransferred, entry.bytesTotal) ? <div className="transfer-card-meta">{formatTransferred(entry.bytesTransferred, entry.bytesTotal)}</div> : null}
@@ -224,7 +237,8 @@ export function TransfersSection({
                 </div>
               </li>
             ))}
-          </ul>
+            </ul>
+          </>
         ) : (
           <p>No transfer activity found.</p>
         )

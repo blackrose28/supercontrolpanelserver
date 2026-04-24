@@ -4,6 +4,8 @@ export const SUPPORTED_COMMAND_TYPES = [
   'request_recent_logs',
   'restart_openvpn',
   'restart_boundary_auth',
+  'start_server_tunnel',
+  'stop_server_tunnel',
   'restart_server_tunnel',
   'restart_server_ssh',
   'open_remote_browser',

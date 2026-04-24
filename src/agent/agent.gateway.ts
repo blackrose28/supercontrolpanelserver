@@ -22,9 +22,11 @@ import {
   requestInventory as requestInventoryRequest,
   requestRecentLogs as requestRecentLogsRequest,
   requestRestartBoundaryAuth as requestRestartBoundaryAuthRequest,
+  requestStartServerTunnel as requestStartServerTunnelRequest,
   requestRestartOpenvpn as requestRestartOpenvpnRequest,
   requestRestartServerSsh as requestRestartServerSshRequest,
   requestRestartServerTunnel as requestRestartServerTunnelRequest,
+  requestStopServerTunnel as requestStopServerTunnelRequest,
   requestStatusSnapshot as requestStatusSnapshotRequest,
   resizePty as resizePtyRequest,
   writePty as writePtyRequest,
@@ -190,6 +192,30 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   requestRestartServerTunnel(deviceId: string, serverId: string, commandId?: string) {
     return requestRestartServerTunnelRequest(
+      {
+        deviceStore: this.deviceStore,
+        sendMessage: this.sendMessage.bind(this),
+      },
+      deviceId,
+      serverId,
+      commandId,
+    );
+  }
+
+  requestStartServerTunnel(deviceId: string, serverId: string, commandId?: string) {
+    return requestStartServerTunnelRequest(
+      {
+        deviceStore: this.deviceStore,
+        sendMessage: this.sendMessage.bind(this),
+      },
+      deviceId,
+      serverId,
+      commandId,
+    );
+  }
+
+  requestStopServerTunnel(deviceId: string, serverId: string, commandId?: string) {
+    return requestStopServerTunnelRequest(
       {
         deviceStore: this.deviceStore,
         sendMessage: this.sendMessage.bind(this),
@@ -610,4 +636,3 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return undefined;
   }
 }
-

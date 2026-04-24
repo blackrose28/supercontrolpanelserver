@@ -135,13 +135,18 @@ The Devices page also exposes the current safe device-control actions:
 - request recent logs
 - restart OpenVPN
 - restart Boundary auth
+- start server tunnel
+- stop server tunnel
 - restart server tunnel
 - restart server SSH
 
-For server-targeted restart actions, the Admin UI uses the selected device's latest inventory summary instead of asking the user to type a raw server ID:
+For server-targeted tunnel and SSH actions, the Admin UI uses the selected device's latest inventory summary instead of asking the user to type a raw server ID:
 
-- restart server tunnel shows a picker of Boundary-backed servers only
+- start/stop/restart server tunnel shows a picker of Boundary-backed servers only
 - restart server SSH shows a picker of all inventory servers
+
+In `admin-next`, the selected device’s Runtime Summary tab now shows direct “Start tunnel”, “Stop tunnel”, and “Restart tunnel” actions for Boundary-backed inventory servers based on the current runtime state.
+That same Runtime Summary tab can also open a dedicated tunnel log tail for a selected Boundary tunnel, sourced from the tunnel PTY output for the current session.
 
 ## Enrollment flow
 
@@ -187,8 +192,11 @@ For server-targeted restart actions, the Admin UI uses the selected device's lat
 - `POST /v1/devices/:id/request-recent-logs`
 - `POST /v1/devices/:id/request-restart-openvpn`
 - `POST /v1/devices/:id/request-restart-boundary-auth`
+- `POST /v1/devices/:id/request-start-server-tunnel`
+- `POST /v1/devices/:id/request-stop-server-tunnel`
 - `POST /v1/devices/:id/request-restart-server-tunnel`
 - `POST /v1/devices/:id/request-restart-server-ssh`
+- `GET /v1/devices/:id/tunnels/:serverId/logs`
 - `POST /v1/logs`
 - `GET /v1/logs`
 - `GET /v1/logs/export`

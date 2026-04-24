@@ -8,8 +8,13 @@ import {
   fetchRecentLogs,
   fetchRuntimeSummary,
   fetchTelemetry,
+  fetchTunnelLogs,
   fetchTransfers,
   requestRecentLogs,
+  requestRestartOpenvpn,
+  requestRestartBoundaryAuth,
+  requestStartServerTunnel,
+  requestStopServerTunnel,
   requestStatusSnapshot,
   stopTransfer,
   dismissTransfer,
@@ -21,10 +26,13 @@ import {
   type RecentLogEntry,
   type RuntimeSummary,
   type TelemetryEntry,
+  type TunnelLogEntry, type TunnelLogsResponse,
   type TransferEntry,
   subscribeTelemetryStream,
+  subscribeCommandsStream,
   subscribeTransfersStream,
-} from '../api/adminApi';import type { DeviceSummary } from '../types/device';
+} from '../api/adminApi';
+import type { DeviceSummary } from '../types/device';
 
 export function useAdminDashboard() {
   const selectionRequestIdRef = useRef(0);
@@ -46,6 +54,11 @@ export function useAdminDashboard() {
   const [recentLogs, setRecentLogs] = useState<RecentLogEntry[]>([]);
   const [recentLogsLoading, setRecentLogsLoading] = useState(false);
   const [recentLogsError, setRecentLogsError] = useState<string | null>(null);
+  const [selectedTunnelServerId, setSelectedTunnelServerId] = useState<string | null>(null);
+  const [tunnelLogs, setTunnelLogs] = useState<TunnelLogEntry[]>([]);
+  const [tunnelLogsLoading, setTunnelLogsLoading] = useState(false);
+  const [tunnelLogsError, setTunnelLogsError] = useState<string | null>(null);
+  const [tunnelLogsTotal, setTunnelLogsTotal] = useState(0);
 
   const [commands, setCommands] = useState<CommandHistoryEntry[]>([]);
   const [commandsLoading, setCommandsLoading] = useState(false);
@@ -206,6 +219,42 @@ export function useAdminDashboard() {
       if (!silent) {
         setRecentLogsLoading(false);
       }
+    }
+  }
+
+  async function loadTunnelLogsOnly(
+    deviceId: string,
+    serverId: string,
+    options?: { silent?: boolean; append?: boolean; offset?: number },
+  ) {
+    const silent = options?.silent === true;
+    const append = options?.append === true;
+    const offset = options?.offset ?? (append ? tunnelLogs.length : 0);
+    if (!silent) {
+      setTunnelLogsLoading(true);
+    }
+
+    try {
+      const { entries, total } = await fetchTunnelLogs(deviceId, serverId, 200, offset);
+      setTunnelLogs((prev) => (append ? [...prev, ...entries] : entries));
+      setTunnelLogsTotal(total);
+      setTunnelLogsError(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load tunnel logs';
+      if (!silent && !append) {
+        setTunnelLogs([]);
+      }
+      setTunnelLogsError(message);
+    } finally {
+      if (!silent) {
+        setTunnelLogsLoading(false);
+      }
+    }
+  }
+
+  function loadMoreTunnelLogs() {
+    if (selectedDeviceId && selectedTunnelServerId && tunnelLogs.length < tunnelLogsTotal) {
+      void loadTunnelLogsOnly(selectedDeviceId, selectedTunnelServerId, { append: true });
     }
   }
 
@@ -434,6 +483,77 @@ export function useAdminDashboard() {
     }
   }
 
+  async function runRequestRestartOpenvpn(deviceId: string) {
+    setDeviceActionLoadingId(deviceId);
+
+    try {
+      await requestRestartOpenvpn(deviceId);
+      setDeviceActionError(null);
+    } catch (err) {
+      setDeviceActionError(err instanceof Error ? err.message : 'Failed to request OpenVPN restart');
+    } finally {
+      setDeviceActionLoadingId(null);
+    }
+  }
+
+  async function runRequestRestartBoundaryAuth(deviceId: string) {
+    setDeviceActionLoadingId(deviceId);
+
+    try {
+      await requestRestartBoundaryAuth(deviceId);
+      setDeviceActionError(null);
+    } catch (err) {
+      setDeviceActionError(err instanceof Error ? err.message : 'Failed to request Boundary auth restart');
+    } finally {
+      setDeviceActionLoadingId(null);
+    }
+  }
+
+  async function runRequestRestartServerTunnel(deviceId: string, serverId: string) {
+    setDeviceActionLoadingId(deviceId);
+
+    try {
+      await requestRestartServerTunnel(deviceId, serverId);
+      setDeviceActionError(null);
+    } catch (err) {
+      setDeviceActionError(err instanceof Error ? err.message : 'Failed to request server tunnel restart');
+    } finally {
+      setDeviceActionLoadingId(null);
+    }
+  }
+
+  async function runRequestStartServerTunnel(deviceId: string, serverId: string) {
+    setDeviceActionLoadingId(deviceId);
+
+    try {
+      await requestStartServerTunnel(deviceId, serverId);
+      setDeviceActionError(null);
+      setSelectedDeviceId(deviceId);
+      await refreshSnapshotData(deviceId);
+      scheduleSnapshotFollowUpRefresh(deviceId);
+    } catch (err) {
+      setDeviceActionError(err instanceof Error ? err.message : 'Failed to request server tunnel start');
+    } finally {
+      setDeviceActionLoadingId(null);
+    }
+  }
+
+  async function runRequestStopServerTunnel(deviceId: string, serverId: string) {
+    setDeviceActionLoadingId(deviceId);
+
+    try {
+      await requestStopServerTunnel(deviceId, serverId);
+      setDeviceActionError(null);
+      setSelectedDeviceId(deviceId);
+      await refreshSnapshotData(deviceId);
+      scheduleSnapshotFollowUpRefresh(deviceId);
+    } catch (err) {
+      setDeviceActionError(err instanceof Error ? err.message : 'Failed to request server tunnel stop');
+    } finally {
+      setDeviceActionLoadingId(null);
+    }
+  }
+
   useEffect(() => {
     void loadDevices();
     return () => {
@@ -452,6 +572,10 @@ export function useAdminDashboard() {
       setRecentLogs([]);
       setRecentLogsError(null);
       setRecentLogsLoading(false);
+      setSelectedTunnelServerId(null);
+      setTunnelLogs([]);
+      setTunnelLogsError(null);
+      setTunnelLogsLoading(false);
       setCommands([]);
       setCommandsError(null);
       setCommandsLoading(false);
@@ -476,31 +600,43 @@ export function useAdminDashboard() {
   }, [selectedDeviceId, telemetryTypeFilter, telemetryTextFilter, telemetryFromTsFilter, telemetryToTsFilter, recentLogsLimit, commandsLimit, telemetryLimit]);
 
   useEffect(() => {
+    if (!selectedDeviceId || !selectedTunnelServerId) {
+      setTunnelLogs([]);
+      setTunnelLogsError(null);
+      setTunnelLogsLoading(false);
+      setTunnelLogsTotal(0);
+      return;
+    }
+
+    void loadTunnelLogsOnly(selectedDeviceId, selectedTunnelServerId);
+  }, [selectedDeviceId, selectedTunnelServerId]);
+
+  useEffect(() => {
     if (!selectedDeviceId) {
       return;
     }
 
     const telemetrySub = subscribeTelemetryStream(selectedDeviceId, () => {
       void loadTelemetry(selectedDeviceId);
+      if (selectedTunnelServerId) {
+        void loadTunnelLogsOnly(selectedDeviceId, selectedTunnelServerId, { silent: true });
+      }
     });
 
     const transfersSub = subscribeTransfersStream(selectedDeviceId, () => {
       void loadTransfers(selectedDeviceId);
     });
 
-    const commandsInterval = window.setInterval(() => {
-      if (document.visibilityState === 'hidden') {
-        return;
-      }
+    const commandsSub = subscribeCommandsStream(selectedDeviceId, () => {
       void loadCommands(selectedDeviceId, { silent: true });
-    }, 15000);
+    });
 
     return () => {
       telemetrySub.unsubscribe();
       transfersSub.unsubscribe();
-      window.clearInterval(commandsInterval);
+      commandsSub.unsubscribe();
     };
-  }, [selectedDeviceId, telemetryTypeFilter, telemetryTextFilter, telemetryFromTsFilter, telemetryToTsFilter, recentLogsLimit, commandsLimit, telemetryLimit]);
+  }, [selectedDeviceId, selectedTunnelServerId, telemetryTypeFilter, telemetryTextFilter, telemetryFromTsFilter, telemetryToTsFilter, recentLogsLimit, commandsLimit, telemetryLimit]);
 
   const telemetryExportUrl = selectedDeviceId
     ? buildTelemetryExportUrl(selectedDeviceId, {
@@ -526,6 +662,12 @@ export function useAdminDashboard() {
     recentLogs,
     recentLogsLoading,
     recentLogsError,
+    selectedTunnelServerId,
+    tunnelLogs,
+    tunnelLogsLoading,
+    tunnelLogsError,
+    tunnelLogsTotal,
+    loadMoreTunnelLogs,
     commands,
     commandsLoading,
     commandsError,
@@ -605,6 +747,7 @@ export function useAdminDashboard() {
     },
     selectDevice: (deviceId: string) => {
       setDeviceActionError(null);
+      setSelectedTunnelServerId(null);
       setSelectedDeviceId(deviceId);
     },
     requestStatusSnapshot: (deviceId: string) => {
@@ -612,6 +755,26 @@ export function useAdminDashboard() {
     },
     requestRecentLogs: (deviceId: string) => {
       void runRequestRecentLogs(deviceId);
+    },
+    selectTunnelServer: (serverId: string) => {
+      setSelectedTunnelServerId(serverId);
+    },
+    refreshTunnelLogs: () => {
+      if (selectedDeviceId && selectedTunnelServerId) {
+        void loadTunnelLogsOnly(selectedDeviceId, selectedTunnelServerId);
+      }
+    },
+    requestRestartOpenvpn: (deviceId: string) => {
+      void runRequestRestartOpenvpn(deviceId);
+    },
+    requestRestartBoundaryAuth: (deviceId: string) => {
+      void runRequestRestartBoundaryAuth(deviceId);
+    },
+    requestStartServerTunnel: (deviceId: string, serverId: string) => {
+      void runRequestStartServerTunnel(deviceId, serverId);
+    },
+    requestStopServerTunnel: (deviceId: string, serverId: string) => {
+      void runRequestStopServerTunnel(deviceId, serverId);
     },
     retryRuntimeSummary: () => {
       if (selectedDeviceId) {

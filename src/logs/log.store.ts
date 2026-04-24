@@ -113,7 +113,7 @@ export class LogStore {
           SELECT id, deviceId, type, sessionId, functionId, seq, ts, payloadJson
           FROM telemetry_logs
           WHERE ${clauses.join(' AND ')}
-          ORDER BY seq DESC, ts DESC
+          ORDER BY ts DESC, seq DESC
           LIMIT ?
         `,
       )
@@ -170,7 +170,7 @@ export class LogStore {
           SELECT id, deviceId, type, sessionId, functionId, seq, ts, payloadJson
           FROM telemetry_logs
           ${where}
-          ORDER BY seq DESC, ts DESC
+          ORDER BY ts DESC, seq DESC
           LIMIT ?
         `,
       )
@@ -283,6 +283,59 @@ export class LogStore {
     );
   }
 
+  listPtyOutputBySession(deviceId: string, sessionId: string, limit = 200, offset = 0): TelemetryEvent[] {
+    const resolvedLimit = Math.min(Math.max(Number(limit) || 200, 1), 5000);
+    const resolvedOffset = Math.max(Number(offset) || 0, 0);
+    const rows = this.databaseService.connection
+      .prepare(
+        `
+          SELECT id, deviceId, type, sessionId, functionId, seq, ts, payloadJson
+          FROM telemetry_logs
+          WHERE deviceId = ?
+            AND type = 'pty-output'
+            AND sessionId = ?
+          ORDER BY ts DESC, seq DESC
+          LIMIT ? OFFSET ?
+        `,
+      )
+      .all(deviceId, sessionId, resolvedLimit, resolvedOffset) as Array<{
+        id: string;
+        deviceId: string;
+        type: string;
+        sessionId?: string | null;
+        functionId?: string | null;
+        seq: number;
+        ts: string;
+        payloadJson?: string | null;
+      }>;
+
+    return rows.reverse().map((row) => ({
+      id: row.id,
+      deviceId: row.deviceId,
+      type: row.type,
+      sessionId: row.sessionId ?? null,
+      functionId: row.functionId ?? null,
+      seq: row.seq,
+      ts: row.ts,
+      payload: this.parsePayload(row.payloadJson),
+    }));
+  }
+
+  countPtyOutputBySession(deviceId: string, sessionId: string): number {
+    const row = this.databaseService.connection
+      .prepare(
+        `
+          SELECT COUNT(*) as cnt
+          FROM telemetry_logs
+          WHERE deviceId = ?
+            AND type = 'pty-output'
+            AND sessionId = ?
+        `,
+      )
+      .get(deviceId, sessionId) as { cnt: number } | undefined;
+    return row?.cnt ?? 0;
+  }
+
   getDeviceRuntimeSummary(deviceId: string): DeviceRuntimeSummary {
     const row = this.databaseService.connection
       .prepare(
@@ -324,6 +377,46 @@ export class LogStore {
       maxEventsPerDevice: this.maxEventsPerDevice,
       maxAgeDays: this.maxAgeDays,
     };
+  }
+
+
+  getLastSessionIdForFunction(deviceId: string, functionId: string): string | null {
+    const row = this.databaseService.connection
+      .prepare(
+        `
+          SELECT sessionId, payloadJson
+          FROM telemetry_logs
+          WHERE deviceId = ?
+            AND functionId = ?
+            AND type = 'function-status'
+            AND sessionId IS NOT NULL
+          ORDER BY ts DESC, seq DESC
+          LIMIT 1
+        `,
+      )
+      .get(deviceId, functionId) as { sessionId?: string | null; payloadJson?: string | null } | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    if (typeof row.sessionId === 'string' && row.sessionId.trim()) {
+      return row.sessionId;
+    }
+
+    // Fall back to payload.sessionId for telemetry-ingested events
+    if (row.payloadJson) {
+      try {
+        const payload = JSON.parse(row.payloadJson);
+        if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
+          return payload.sessionId;
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+
+    return null;
   }
 
   getAllRuntimeSummaries(): DeviceRuntimeSummary[] {
@@ -376,7 +469,7 @@ export class LogStore {
               SELECT id
               FROM telemetry_logs
               WHERE deviceId = ?
-              ORDER BY seq DESC, ts DESC
+              ORDER BY ts DESC, seq DESC
               LIMIT ?
             )
         `,
@@ -407,7 +500,7 @@ export class LogStore {
   }
 
   private updateRuntimeSummary(event: TelemetryEvent) {
-    if (event.type !== 'function-status' && event.type !== 'inventory') {
+    if (event.type !== 'function-status' && event.type !== 'inventory' && event.type !== 'status_snapshot') {
       return;
     }
 
@@ -416,6 +509,44 @@ export class LogStore {
 
     if (event.type === 'inventory') {
       summary.inventory = event.payload;
+    }
+
+    if (event.type === 'status_snapshot') {
+      const payload =
+        event.payload && typeof event.payload === 'object'
+          ? (event.payload as Record<string, unknown>)
+          : {};
+      // Replace all function states with the snapshot — clears stale entries
+      summary.functions = {};
+      const functionStates = Array.isArray(payload.functionStates) ? payload.functionStates : [];
+      for (const fs of functionStates) {
+        const state = fs as Record<string, unknown>;
+        const functionId =
+          typeof state.functionId === 'string' && state.functionId.trim()
+            ? state.functionId
+            : 'unknown';
+        summary.functions[functionId] = {
+          functionId,
+          state: typeof state.state === 'string' ? state.state : undefined,
+          message: typeof state.message === 'string' ? state.message : undefined,
+          sessionId:
+            typeof state.sessionId === 'string'
+              ? state.sessionId
+              : state.sessionId == null
+                ? null
+                : undefined,
+          boundaryTokenSource:
+            typeof state.boundaryTokenSource === 'string'
+              ? state.boundaryTokenSource
+              : state.boundaryTokenSource == null
+                ? null
+                : undefined,
+          updatedAtMs:
+            typeof state.updatedAtMs === 'number' ? state.updatedAtMs : undefined,
+          observedAt: event.ts,
+          raw: state,
+        };
+      }
     }
 
     if (event.type === 'function-status') {

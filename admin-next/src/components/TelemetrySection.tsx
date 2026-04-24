@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { TelemetryEntry } from '../api/adminApi';
+import { formatTimestamp } from '../utils/formatTimestamp';
 
 type TelemetrySectionProps = {
   selectedDeviceId: string | null;
@@ -124,13 +125,22 @@ export function TelemetrySection({
 
   return (
     <section className="panel-section telemetry-section">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2>Telemetry</h2>
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+      <div className="telemetry-section-header">
+        <div>
+          <h2>Telemetry</h2>
+          <p className="telemetry-section-subtitle">
+            Filter, inspect, and export device telemetry without losing context on active event types.
+          </p>
+        </div>
+        <div className="telemetry-toolbar">
           {selectedDeviceId ? (
-            <label style={{ fontSize: '0.9rem' }}>
-              Show:{' '}
+            <>
+              <p className="telemetry-toolbar-caption">Showing up to {telemetryLimit} events</p>
+              <label className="telemetry-toolbar-label toolbar-limit-field">
+                Show:{' '}
               <select
+                aria-label="Telemetry limit"
+                className="telemetry-toolbar-select"
                 value={telemetryLimit}
                 onChange={(e) => onLimitChange(Number(e.target.value))}
                 disabled={telemetryLoading}
@@ -140,58 +150,71 @@ export function TelemetrySection({
                 <option value={200}>200</option>
                 <option value={500}>500</option>
               </select>
-            </label>
+              </label>
+            </>
           ) : null}
-          <button className="panel-refresh-button" type="button" onClick={onRefresh} disabled={!selectedDeviceId || telemetryLoading}>
+          <button className="telemetry-toolbar-button" type="button" onClick={onRefresh} disabled={!selectedDeviceId || telemetryLoading}>
             Refresh telemetry
           </button>
         </div>
       </div>
-      <a
-        className="telemetry-export-link"
-        href={telemetryExportUrl || '#'}
-        aria-disabled={!telemetryExportUrl}
-      >
-        Export telemetry
-      </a>
-      <button type="button" disabled={!canExportEvents} onClick={() => exportEvents('json')}>Export JSON</button>
-      <button type="button" disabled={!canExportEvents} onClick={() => exportEvents('csv')}>Export CSV</button>
-      <label>
-        Type
-        <input
-          className="telemetry-filter-input"
-          type="text"
-          value={telemetryTypeFilter}
-          onChange={(event) => onTelemetryTypeFilterChange(event.target.value)}
-        />
-      </label>
-      <label>
-        Search
-        <input
-          className="telemetry-filter-input"
-          type="text"
-          value={telemetryTextFilter}
-          onChange={(event) => onTelemetryTextFilterChange(event.target.value)}
-        />
-      </label>
-      <label>
-        From
-        <input
-          className="telemetry-filter-input"
-          type="text"
-          value={telemetryFromTsFilter}
-          onChange={(event) => onTelemetryFromTsFilterChange(event.target.value)}
-        />
-      </label>
-      <label>
-        To
-        <input
-          className="telemetry-filter-input"
-          type="text"
-          value={telemetryToTsFilter}
-          onChange={(event) => onTelemetryToTsFilterChange(event.target.value)}
-        />
-      </label>
+      <div className="telemetry-tools-grid">
+        <div className="telemetry-filter-panel">
+          <div className="telemetry-panel-heading">Telemetry filters</div>
+          <div className="telemetry-filter-grid">
+            <label className="telemetry-filter-field">
+              Type
+              <input
+                className="telemetry-filter-input"
+                type="text"
+                value={telemetryTypeFilter}
+                onChange={(event) => onTelemetryTypeFilterChange(event.target.value)}
+              />
+            </label>
+            <label className="telemetry-filter-field">
+              Search
+              <input
+                className="telemetry-filter-input"
+                type="text"
+                value={telemetryTextFilter}
+                onChange={(event) => onTelemetryTextFilterChange(event.target.value)}
+              />
+            </label>
+            <label className="telemetry-filter-field">
+              From
+              <input
+                className="telemetry-filter-input"
+                type="text"
+                value={telemetryFromTsFilter}
+                onChange={(event) => onTelemetryFromTsFilterChange(event.target.value)}
+              />
+            </label>
+            <label className="telemetry-filter-field">
+              To
+              <input
+                className="telemetry-filter-input"
+                type="text"
+                value={telemetryToTsFilter}
+                onChange={(event) => onTelemetryToTsFilterChange(event.target.value)}
+              />
+            </label>
+          </div>
+        </div>
+        <div className="telemetry-export-panel">
+          <div className="telemetry-panel-heading">Export</div>
+          <a
+            className="telemetry-export-link"
+            href={telemetryExportUrl || '#'}
+            aria-disabled={!telemetryExportUrl}
+          >
+            Export telemetry
+          </a>
+          <div className="telemetry-export-actions">
+            <button className="telemetry-toolbar-button" type="button" disabled={!canExportEvents} onClick={() => exportEvents('json')}>Export JSON</button>
+            <button className="telemetry-toolbar-button" type="button" disabled={!canExportEvents} onClick={() => exportEvents('csv')}>Export CSV</button>
+          </div>
+        </div>
+      </div>
       {!selectedDeviceId ? <p>Select a device to load telemetry.</p> : null}
       {telemetryLoading ? <p>Loading telemetry…</p> : null}
       {telemetryError ? <p>{telemetryError}</p> : null}
@@ -216,13 +239,21 @@ export function TelemetrySection({
                 );
               })}
             </ul>
+            <div className="telemetry-panel-heading">Event stream</div>
             <ul>
               {visibleTelemetry.map((entry) => {
                 const expanded = expandedEventId === entry.id;
                 return (
                   <li className="telemetry-row" key={entry.id || `${entry.ts || ''}-${entry.type || ''}`}>
-                    <strong>{entry.type || '-'}</strong> · <span>{entry.ts || '-'}</span> · <span>{entry.functionId || '-'}</span> · <span title={typeof entry.payload === 'string' ? entry.payload : JSON.stringify(entry.payload ?? null)}>{previewPayload(entry.payload)}</span>{' '}
-                    <button type="button" aria-label="Toggle detail" onClick={() => toggleDetails(entry.id)}>{expanded ? '▲' : '▼'}</button>
+                    <div className="telemetry-row-main">
+                      <strong>{entry.type || '-'}</strong>
+                      <span>{formatTimestamp(entry.ts)}</span>
+                    </div>
+                    <div className="telemetry-row-main">
+                      <span>{entry.functionId || '-'}</span>
+                      <span title={typeof entry.payload === 'string' ? entry.payload : JSON.stringify(entry.payload ?? null)}>{previewPayload(entry.payload)}</span>
+                    </div>
+                    <button className="telemetry-toggle-button" type="button" aria-label="Toggle detail" onClick={() => toggleDetails(entry.id)}>{expanded ? '▲' : '▼'}</button>
                     {expanded ? <pre>{JSON.stringify(entry, null, 2)}</pre> : null}
                   </li>
                 );

@@ -68,6 +68,30 @@ export function dispatchGenericCommandGroup(input: {
         principal,
         dispatch: (commandId) => deps.agentGateway.requestRestartBoundaryAuth(deviceId, commandId),
       });
+    case 'start_server_tunnel': {
+      const serverId = readRequiredServerId(payload);
+      return deps.dispatchSafeCommand({
+        deviceId,
+        commandType,
+        requestedCommandId,
+        payload: { serverId },
+        payloadSummary: `Start server tunnel for ${serverId}`,
+        principal,
+        dispatch: (commandId) => deps.agentGateway.requestStartServerTunnel(deviceId, serverId, commandId),
+      });
+    }
+    case 'stop_server_tunnel': {
+      const serverId = readRequiredServerId(payload);
+      return deps.dispatchSafeCommand({
+        deviceId,
+        commandType,
+        requestedCommandId,
+        payload: { serverId },
+        payloadSummary: `Stop server tunnel for ${serverId}`,
+        principal,
+        dispatch: (commandId) => deps.agentGateway.requestStopServerTunnel(deviceId, serverId, commandId),
+      });
+    }
     case 'restart_server_tunnel': {
       const serverId = readRequiredServerId(payload);
       return deps.dispatchSafeCommand({
