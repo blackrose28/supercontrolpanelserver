@@ -182,6 +182,109 @@ export function requestRestartServerSsh(deps: RequestDeps, deviceId: string, ser
   return { ok: true, deviceId, serverId: normalizedServerId, reqSeq: envelope.seq, requestedAt: envelope.ts };
 }
 
+export function requestStartServerSsh(
+  deps: PtyDeps,
+  deviceId: string,
+  input: { serverId: string; sessionId: string; cols: number; rows: number; actorType?: string; actorId?: string | null },
+  commandId?: string,
+) {
+  const session = deps.deviceStore.getSessionByDeviceId(deviceId);
+  if (!session?.ws) {
+    return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
+  }
+
+  const normalizedServerId = String(input.serverId || '').trim();
+  if (!normalizedServerId) {
+    return { ok: false, reason: 'SERVER_ID_REQUIRED' };
+  }
+  const normalizedSessionId = String(input.sessionId || '').trim();
+  if (!normalizedSessionId) {
+    return { ok: false, reason: 'SESSION_ID_REQUIRED' };
+  }
+
+  deps.ptySessionStore.createOpening({
+    id: randomUUID(),
+    sessionId: normalizedSessionId,
+    deviceId,
+    cols: input.cols,
+    rows: input.rows,
+    openedAt: new Date().toISOString(),
+    recordingEnabled: false,
+    openedByActorType: input.actorType ?? null,
+    openedByActorId: input.actorId ?? null,
+    attachedActorType: input.actorType ?? null,
+    attachedActorId: input.actorId ?? null,
+  });
+
+  const envelope = deps.sendMessage(session.ws, {
+    type: 'request_start_server_ssh',
+    commandId,
+    payload: {
+      serverId: normalizedServerId,
+      sessionId: normalizedSessionId,
+      cols: input.cols,
+      rows: input.rows,
+    },
+  });
+  deps.ptySessionStore.trackPendingReq(deviceId, envelope.seq, normalizedSessionId, 'open');
+
+  return { ok: true, deviceId, serverId: normalizedServerId, sessionId: normalizedSessionId, reqSeq: envelope.seq, requestedAt: envelope.ts };
+}
+
+export function requestAttachServerSsh(
+  deps: PtyDeps,
+  deviceId: string,
+  input: { serverId: string; sessionId: string; localSessionId: string; cols: number; rows: number; actorType?: string; actorId?: string | null },
+  commandId?: string,
+) {
+  const session = deps.deviceStore.getSessionByDeviceId(deviceId);
+  if (!session?.ws) {
+    return { ok: false, reason: 'DEVICE_NOT_CONNECTED' };
+  }
+
+  const normalizedServerId = String(input.serverId || '').trim();
+  if (!normalizedServerId) {
+    return { ok: false, reason: 'SERVER_ID_REQUIRED' };
+  }
+  const normalizedSessionId = String(input.sessionId || '').trim();
+  if (!normalizedSessionId) {
+    return { ok: false, reason: 'SESSION_ID_REQUIRED' };
+  }
+  const normalizedLocalSessionId = String(input.localSessionId || '').trim();
+  if (!normalizedLocalSessionId) {
+    return { ok: false, reason: 'LOCAL_SESSION_ID_REQUIRED' };
+  }
+
+  deps.ptySessionStore.createOpening({
+    id: randomUUID(),
+    sessionId: normalizedSessionId,
+    deviceId,
+    cols: input.cols,
+    rows: input.rows,
+    openedAt: new Date().toISOString(),
+    recordingEnabled: false,
+    openedByActorType: input.actorType ?? null,
+    openedByActorId: input.actorId ?? null,
+    attachedActorType: input.actorType ?? null,
+    attachedActorId: input.actorId ?? null,
+  });
+
+  const envelope = deps.sendMessage(session.ws, {
+    type: 'request_attach_server_ssh',
+    commandId,
+    payload: {
+      serverId: normalizedServerId,
+      sessionId: normalizedSessionId,
+      localSessionId: normalizedLocalSessionId,
+      cols: input.cols,
+      rows: input.rows,
+    },
+  });
+  deps.ptySessionStore.trackPendingReq(deviceId, envelope.seq, normalizedSessionId, 'open');
+
+  return { ok: true, deviceId, serverId: normalizedServerId, sessionId: normalizedSessionId, reqSeq: envelope.seq, requestedAt: envelope.ts };
+}
+
 export function dispatchFileOpCommand(
   deps: RequestDeps,
   deviceId: string,

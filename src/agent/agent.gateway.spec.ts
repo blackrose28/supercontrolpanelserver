@@ -133,6 +133,87 @@ describe('AgentGateway request methods', () => {
     expect(sentPayload.payload).toEqual({ serverId: 'srv-2' });
   });
 
+  it('requestStartServerSsh creates an attached PTY session and sends SSH start request', () => {
+    deviceStore.getSessionByDeviceId.mockReturnValue({ ws });
+
+    const result = gateway.requestStartServerSsh('device-1', {
+      serverId: ' srv-ssh ',
+      sessionId: 'ssh-session-1',
+      cols: 120,
+      rows: 32,
+      actorType: 'admin_session',
+      actorId: 'admin-1',
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      deviceId: 'device-1',
+      serverId: 'srv-ssh',
+      sessionId: 'ssh-session-1',
+      reqSeq: 1,
+    });
+    expect(ptySessionStore.createOpening).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'ssh-session-1',
+      deviceId: 'device-1',
+      cols: 120,
+      rows: 32,
+      recordingEnabled: false,
+      openedByActorType: 'admin_session',
+      openedByActorId: 'admin-1',
+      attachedActorType: 'admin_session',
+      attachedActorId: 'admin-1',
+    }));
+    expect(ptySessionStore.trackPendingReq).toHaveBeenCalledWith('device-1', 1, 'ssh-session-1', 'open');
+
+    const sentPayload = JSON.parse(String(ws.send.mock.calls[0][0]));
+    expect(sentPayload.type).toBe('request_start_server_ssh');
+    expect(sentPayload.payload).toEqual({ serverId: 'srv-ssh', sessionId: 'ssh-session-1', cols: 120, rows: 32 });
+  });
+
+  it('requestAttachServerSsh creates an attached remote PTY session and sends local adoption request', () => {
+    deviceStore.getSessionByDeviceId.mockReturnValue({ ws });
+
+    const result = gateway.requestAttachServerSsh('device-1', {
+      serverId: ' srv-ssh ',
+      sessionId: 'server-ssh-srv-ssh-11111111-1111-4111-8111-111111111111',
+      localSessionId: ' local-pty-1 ',
+      cols: 120,
+      rows: 32,
+      actorType: 'admin_session',
+      actorId: 'admin-1',
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      deviceId: 'device-1',
+      serverId: 'srv-ssh',
+      sessionId: 'server-ssh-srv-ssh-11111111-1111-4111-8111-111111111111',
+      reqSeq: 1,
+    });
+    expect(ptySessionStore.createOpening).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'server-ssh-srv-ssh-11111111-1111-4111-8111-111111111111',
+      deviceId: 'device-1',
+      cols: 120,
+      rows: 32,
+      recordingEnabled: false,
+      openedByActorType: 'admin_session',
+      openedByActorId: 'admin-1',
+      attachedActorType: 'admin_session',
+      attachedActorId: 'admin-1',
+    }));
+    expect(ptySessionStore.trackPendingReq).toHaveBeenCalledWith('device-1', 1, 'server-ssh-srv-ssh-11111111-1111-4111-8111-111111111111', 'open');
+
+    const sentPayload = JSON.parse(String(ws.send.mock.calls[0][0]));
+    expect(sentPayload.type).toBe('request_attach_server_ssh');
+    expect(sentPayload.payload).toEqual({
+      serverId: 'srv-ssh',
+      sessionId: 'server-ssh-srv-ssh-11111111-1111-4111-8111-111111111111',
+      localSessionId: 'local-pty-1',
+      cols: 120,
+      rows: 32,
+    });
+  });
+
   it('openPty tracks pending open request and creates opening session', () => {
     deviceStore.getSessionByDeviceId.mockReturnValue({ ws });
 
@@ -185,6 +266,19 @@ describe('AgentGateway request methods', () => {
     );
 
     await expect(pending).resolves.toEqual({
+      ok: true,
+      payload: { ok: 1 },
+      ts: '2026-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('awaitReqResponse resolves when ack arrived before waiter registration', async () => {
+    (gateway as any).handleAck(
+      { reqSeq: 43, payload: { ok: 1 }, ts: '2026-01-01T00:00:00.000Z' },
+      { deviceId: 'device-1' },
+    );
+
+    await expect(gateway.awaitReqResponse('device-1', 43, 1000)).resolves.toEqual({
       ok: true,
       payload: { ok: 1 },
       ts: '2026-01-01T00:00:00.000Z',
@@ -274,6 +368,61 @@ describe('AgentGateway request methods', () => {
     const lastSent = JSON.parse(String(ws.send.mock.calls[ws.send.mock.calls.length - 1][0]));
     expect(lastSent.type).toBe('ack');
     expect(lastSent.reqSeq).toBe(11);
+  });
+
+
+  it('handleTransferStatus fills transferred bytes from total when transfer succeeds', () => {
+    fileTransferStore.get.mockReturnValue({
+      transferId: 't-success',
+      deviceId: 'device-1',
+      state: 'running',
+      phase: 'transfer',
+      reasonCode: null,
+      reasonDetail: null,
+      message: null,
+      attempt: 1,
+      maxAttempts: 3,
+      resumeSupported: false,
+      retryScheduled: false,
+      resumeToken: null,
+      resumeOffsetBytes: null,
+      tempPathHint: null,
+      bytesTransferred: 0,
+      bytesTotal: 86682104,
+      percent: null,
+      throughputBps: null,
+      etaSec: null,
+    });
+
+    (gateway as any).handleTransferStatus(
+      {
+        seq: 12,
+        ts: '2026-01-01T00:00:00.000Z',
+        payload: {
+          transferId: 't-success',
+          state: 'succeeded',
+          phase: 'finalize',
+        },
+      },
+      { deviceId: 'device-1', send: ws.send },
+    );
+
+    expect(fileTransferStore.updateProgress).toHaveBeenCalledWith(
+      't-success',
+      '2026-01-01T00:00:00.000Z',
+      expect.objectContaining({
+        bytesTransferred: 86682104,
+        bytesTotal: 86682104,
+        percent: 100,
+        phase: 'finalize',
+      }),
+    );
+    expect(fileTransferStore.markState).toHaveBeenCalledWith(
+      't-success',
+      'succeeded',
+      '2026-01-01T00:00:00.000Z',
+      expect.any(Object),
+    );
   });
 
   it('handleCommandStatus marks command succeeded and appends audit', () => {
@@ -607,6 +756,23 @@ describe('AgentGateway request methods', () => {
     );
 
     await expect(pending).rejects.toEqual({
+      code: 'DENIED',
+      payload: { error: 'DENIED' },
+      ts: '2026-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('awaitReqResponse rejects when nack arrived before waiter registration', async () => {
+    (gateway as any).handleNack(
+      {
+        reqSeq: 78,
+        ts: '2026-01-01T00:00:00.000Z',
+        payload: { error: 'DENIED' },
+      },
+      { deviceId: 'device-1' },
+    );
+
+    await expect(gateway.awaitReqResponse('device-1', 78, 1000)).rejects.toEqual({
       code: 'DENIED',
       payload: { error: 'DENIED' },
       ts: '2026-01-01T00:00:00.000Z',

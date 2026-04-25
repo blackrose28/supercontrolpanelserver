@@ -144,9 +144,12 @@ For server-targeted tunnel and SSH actions, the Admin UI uses the selected devic
 
 - start/stop/restart server tunnel shows a picker of Boundary-backed servers only
 - restart server SSH shows a picker of all inventory servers
+- `admin-next` can start server SSH sessions as browser-attached PTYs using the existing tunnel endpoint when the selected Boundary tunnel is already running.
 
-In `admin-next`, the selected device’s Runtime Summary tab now shows direct “Start tunnel”, “Stop tunnel”, and “Restart tunnel” actions for Boundary-backed inventory servers based on the current runtime state.
-That same Runtime Summary tab can also open a dedicated tunnel log tail for a selected Boundary tunnel, sourced from the tunnel PTY output for the current session.
+In `admin-next`, the selected device's Runtime Summary tab shows direct “Start tunnel”, “Stop tunnel”, and “Restart tunnel” actions for Boundary-backed inventory servers based on the current runtime state.
+Each server row owns a runtime drawer below the row. The drawer can show an xterm-based SSH terminal, the selected tunnel log tail, or tabs for both panes while keeping active SSH terminals mounted across tab switches. When Runtime Summary loads a server SSH status that is still running, `admin-next` rehydrates an existing browser PTY session or adopts the live local PTY from the agent, including recent scrollback, so the terminal attaches to the existing shell instead of starting from an empty state.
+
+The `admin-next` Transfer Activity tab can start SCP uploads and downloads for servers from the selected device inventory. Operators choose a server, direction, local path, remote path, overwrite behavior, and transfer options; progress bars and recovery actions appear in the existing transfer queue. Transfer history is returned as `{ items: [...] }` from `GET /v1/file-transfers`, and live updates arrive from named `file_transfer` SSE events on `/v1/file-transfers/stream`.
 
 ## Enrollment flow
 

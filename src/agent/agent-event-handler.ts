@@ -12,6 +12,12 @@ type PendingReqResponses = Map<
   }
 >;
 
+type CompletedReqResponse =
+  | { kind: 'ack'; payload: unknown; ts: string }
+  | { kind: 'nack'; error: unknown };
+
+type CompletedReqResponses = Map<string, CompletedReqResponse>;
+
 type PendingPtyReq = { sessionId: string; type: 'open' | 'close' } | null;
 
 type CommandStoreNackDeps = {
@@ -38,27 +44,32 @@ export function handleAgentNack(input: {
   envelope: any;
   client: any;
   pendingReqResponses: PendingReqResponses;
+  completedReqResponses?: CompletedReqResponses;
   commandStore: CommandStoreNackDeps;
   ptySessionStore: PtySessionStoreNackDeps;
 }) {
-  const { envelope, client, pendingReqResponses, commandStore, ptySessionStore } = input;
+  const { envelope, client, pendingReqResponses, completedReqResponses, commandStore, ptySessionStore } = input;
   const reqSeq = typeof envelope.reqSeq === 'number' ? envelope.reqSeq : null;
   if (reqSeq == null) {
     return;
   }
 
+  const rejection = {
+    code:
+      envelope.payload && typeof envelope.payload === 'object' && typeof envelope.payload.error === 'string'
+        ? envelope.payload.error
+        : 'AGENT_NACK',
+    payload: envelope.payload ?? null,
+    ts: envelope.ts || new Date().toISOString(),
+  };
+
   const pendingResponse = pendingReqResponses.get(reqSeq);
   if (pendingResponse && pendingResponse.deviceId === client.deviceId) {
     clearTimeout(pendingResponse.timer);
     pendingReqResponses.delete(reqSeq);
-    pendingResponse.reject({
-      code:
-        envelope.payload && typeof envelope.payload === 'object' && typeof envelope.payload.error === 'string'
-          ? envelope.payload.error
-          : 'AGENT_NACK',
-      payload: envelope.payload ?? null,
-      ts: envelope.ts || new Date().toISOString(),
-    });
+    pendingResponse.reject(rejection);
+  } else {
+    completedReqResponses?.set(`${client.deviceId}:${reqSeq}`, { kind: 'nack', error: rejection });
   }
 
   const command = commandStore.findByReqSeq(client.deviceId, reqSeq);
@@ -98,6 +109,7 @@ export function handleAgentAck(input: {
   envelope: any;
   client: any;
   pendingReqResponses: PendingReqResponses;
+  completedReqResponses?: CompletedReqResponses;
   commandStore: {
     findByReqSeq: (deviceId: string, reqSeq: number) => any;
   };
@@ -110,20 +122,28 @@ export function handleAgentAck(input: {
     append: (entry: any) => void;
   };
 }) {
-  const { envelope, client, pendingReqResponses, commandStore, ptySessionStore, ptyAudit } = input;
+  const { envelope, client, pendingReqResponses, completedReqResponses, commandStore, ptySessionStore, ptyAudit } = input;
   const reqSeq = typeof envelope.reqSeq === 'number' ? envelope.reqSeq : null;
   if (reqSeq == null) {
     return;
   }
 
+  const response = {
+    ok: true as const,
+    payload: envelope.payload ?? null,
+    ts: envelope.ts || new Date().toISOString(),
+  };
+
   const pendingResponse = pendingReqResponses.get(reqSeq);
   if (pendingResponse && pendingResponse.deviceId === client.deviceId) {
     clearTimeout(pendingResponse.timer);
     pendingReqResponses.delete(reqSeq);
-    pendingResponse.resolve({
-      ok: true,
-      payload: envelope.payload ?? null,
-      ts: envelope.ts || new Date().toISOString(),
+    pendingResponse.resolve(response);
+  } else {
+    completedReqResponses?.set(`${client.deviceId}:${reqSeq}`, {
+      kind: 'ack',
+      payload: response.payload,
+      ts: response.ts,
     });
   }
 
@@ -320,8 +340,37 @@ export function handleAgentTransferStatus(input: {
 
   const state = typeof payload.state === 'string' && payload.state.trim().length ? payload.state.trim() : existing.state;
   if (state === 'queued' || state === 'starting' || state === 'running' || state === 'succeeded' || state === 'failed' || state === 'canceled') {
+    const ts = envelope.ts || new Date().toISOString();
     const nextState = existing.state === 'canceled' && existing.reasonCode === 'transfer_stop_requested' && state === 'failed' ? 'canceled' : state;
-    fileTransferStore.markState(transferId, nextState, envelope.ts || new Date().toISOString(), {
+    if (
+      nextState === 'succeeded'
+      && typeof existing.bytesTotal === 'number'
+      && Number.isFinite(existing.bytesTotal)
+      && existing.bytesTotal > 0
+      && (!(typeof existing.bytesTransferred === 'number') || existing.bytesTransferred < existing.bytesTotal)
+    ) {
+      fileTransferStore.updateProgress(transferId, ts, {
+        bytesTransferred: existing.bytesTotal,
+        bytesTotal: existing.bytesTotal,
+        percent: 100,
+        throughputBps: existing.throughputBps ?? null,
+        etaSec: 0,
+        phase: typeof payload.phase === 'string' ? payload.phase : existing.phase ?? 'finalize',
+        message: typeof payload.message === 'string' ? payload.message : existing.message ?? 'Transfer finished.',
+        attempt: typeof payload.attempt === 'number' && Number.isFinite(payload.attempt) ? payload.attempt : existing.attempt,
+        maxAttempts: typeof payload.maxAttempts === 'number' && Number.isFinite(payload.maxAttempts) ? payload.maxAttempts : existing.maxAttempts,
+        resumeSupported: typeof payload.resumeSupported === 'boolean' ? payload.resumeSupported : existing.resumeSupported,
+        retryScheduled: typeof payload.retryScheduled === 'boolean' ? payload.retryScheduled : existing.retryScheduled,
+        resumeToken: typeof payload.resumeToken === 'string' ? payload.resumeToken : payload.resumeToken === null ? null : existing.resumeToken,
+        resumeOffsetBytes: typeof payload.resumeOffsetBytes === 'number' && Number.isFinite(payload.resumeOffsetBytes)
+          ? payload.resumeOffsetBytes
+          : payload.resumeOffsetBytes === null
+            ? null
+            : existing.resumeOffsetBytes,
+        tempPathHint: typeof payload.tempPathHint === 'string' ? payload.tempPathHint : payload.tempPathHint === null ? null : existing.tempPathHint,
+      });
+    }
+    fileTransferStore.markState(transferId, nextState, ts, {
       phase: typeof payload.phase === 'string' ? payload.phase : existing.phase,
       reasonCode: typeof payload.reasonCode === 'string' ? payload.reasonCode : existing.reasonCode,
       reasonDetail: typeof payload.reasonDetail === 'string' ? payload.reasonDetail : existing.reasonDetail,

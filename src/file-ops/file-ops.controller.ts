@@ -49,7 +49,9 @@ export class FileOpsController {
     }
 
     const resolvedLimit = Math.min(Math.max(Number(limit) || 100, 1), 1000);
-    return this.fileTransferStore.listByDevice(normalizedDeviceId, resolvedLimit);
+    return {
+      items: this.fileTransferStore.listByDevice(normalizedDeviceId, resolvedLimit),
+    };
   }
 
   @Post('file-transfers/dismiss')

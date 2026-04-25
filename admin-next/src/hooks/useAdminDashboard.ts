@@ -5,6 +5,7 @@ import {
   fetchCommands,
   fetchDeviceDetails,
   fetchDevices,
+  fetchPtySessions,
   fetchRecentLogs,
   fetchRuntimeSummary,
   fetchTelemetry,
@@ -13,6 +14,9 @@ import {
   requestRecentLogs,
   requestRestartOpenvpn,
   requestRestartBoundaryAuth,
+  requestRestartServerTunnel,
+  requestAttachServerSshPty,
+  requestStartServerSshPty,
   requestStartServerTunnel,
   requestStopServerTunnel,
   requestStatusSnapshot,
@@ -21,10 +25,14 @@ import {
   forceRemoveTransfer,
   dismissFinishedTransfers,
   resumeTransfer,
+  startScpTransfer as startScpTransferRequest,
   type CommandAuditEntry,
   type CommandHistoryEntry,
   type RecentLogEntry,
+  type PtySessionEntry,
   type RuntimeSummary,
+  type ScpTransferDirection,
+  type ScpTransferPayload,
   type TelemetryEntry,
   type TunnelLogEntry, type TunnelLogsResponse,
   type TransferEntry,
@@ -33,6 +41,74 @@ import {
   subscribeTransfersStream,
 } from '../api/adminApi';
 import type { DeviceSummary } from '../types/device';
+
+type ActiveSshTerminal = {
+  deviceId: string;
+  serverId: string;
+  sessionId: string;
+};
+
+const SERVER_SSH_SESSION_PATTERN = /^server-ssh-(.+)-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const RUNTIME_SUMMARY_TELEMETRY_TYPES = new Set(['function-status', 'inventory', 'status_snapshot']);
+
+function telemetryType(entry?: TelemetryEntry): string {
+  return typeof entry?.type === 'string' ? entry.type.trim().toLowerCase() : '';
+}
+
+function shouldRefreshRuntimeSummaryFromTelemetry(entry?: TelemetryEntry): boolean {
+  if (!entry) {
+    return true;
+  }
+
+  return RUNTIME_SUMMARY_TELEMETRY_TYPES.has(telemetryType(entry));
+}
+
+function shouldRefetchTelemetryListFromTelemetry(entry?: TelemetryEntry): boolean {
+  if (!entry) {
+    return true;
+  }
+
+  return telemetryType(entry) !== 'pty-output';
+}
+
+function serverIdFromSshSessionId(sessionId: string): string | null {
+  const match = SERVER_SSH_SESSION_PATTERN.exec(sessionId.trim());
+  return match?.[1] || null;
+}
+
+function activeSshTerminalsFromPtySessions(deviceId: string, sessions: PtySessionEntry[]): ActiveSshTerminal[] {
+  return sessions.flatMap((session) => {
+    const sessionId = typeof session.sessionId === 'string' ? session.sessionId.trim() : '';
+    const state = typeof session.state === 'string' ? session.state.trim().toLowerCase() : '';
+    const serverId = serverIdFromSshSessionId(sessionId);
+
+    if (!serverId || !['opening', 'open'].includes(state)) {
+      return [];
+    }
+
+    return [{ deviceId, serverId, sessionId }];
+  });
+}
+
+function runtimeSummaryHasActiveSsh(summary: RuntimeSummary): boolean {
+  return Object.entries(summary.functions ?? {}).some(([functionId, status]) => {
+    const state = typeof status?.state === 'string' ? status.state.trim().toLowerCase() : '';
+    return functionId.startsWith('server-ssh-') && ['starting', 'running'].includes(state);
+  });
+}
+
+function activeSshSessionsFromRuntimeSummary(summary: RuntimeSummary): Array<{ serverId: string; localSessionId: string }> {
+  return Object.entries(summary.functions ?? {}).flatMap(([functionId, status]) => {
+    const state = typeof status?.state === 'string' ? status.state.trim().toLowerCase() : '';
+    const localSessionId = typeof status?.sessionId === 'string' ? status.sessionId.trim() : '';
+    if (!functionId.startsWith('server-ssh-') || !['starting', 'running'].includes(state) || !localSessionId) {
+      return [];
+    }
+
+    const serverId = functionId.slice('server-ssh-'.length).trim();
+    return serverId ? [{ serverId, localSessionId }] : [];
+  });
+}
 
 export function useAdminDashboard() {
   const selectionRequestIdRef = useRef(0);
@@ -55,6 +131,7 @@ export function useAdminDashboard() {
   const [recentLogsLoading, setRecentLogsLoading] = useState(false);
   const [recentLogsError, setRecentLogsError] = useState<string | null>(null);
   const [selectedTunnelServerId, setSelectedTunnelServerId] = useState<string | null>(null);
+  const [activeSshTerminals, setActiveSshTerminals] = useState<ActiveSshTerminal[]>([]);
   const [tunnelLogs, setTunnelLogs] = useState<TunnelLogEntry[]>([]);
   const [tunnelLogsLoading, setTunnelLogsLoading] = useState(false);
   const [tunnelLogsError, setTunnelLogsError] = useState<string | null>(null);
@@ -73,6 +150,7 @@ export function useAdminDashboard() {
   const [transfersLoading, setTransfersLoading] = useState(false);
   const [transfersError, setTransfersError] = useState<string | null>(null);
   const [transferActionLoading, setTransferActionLoading] = useState(false);
+  const [transferStartLoading, setTransferStartLoading] = useState(false);
   const [activeTransferId, setActiveTransferId] = useState<string | null>(null);
 
   const [telemetry, setTelemetry] = useState<TelemetryEntry[]>([]);
@@ -89,6 +167,56 @@ export function useAdminDashboard() {
   const [telemetryLimit, setTelemetryLimit] = useState(100);
 
   const [deviceActionError, setDeviceActionError] = useState<string | null>(null);
+
+  async function loadActiveSshTerminalsOnly(deviceId: string, requestId?: number, summary?: RuntimeSummary) {
+    try {
+      const sessions = await fetchPtySessions(deviceId);
+      if (requestId != null && selectionRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      const hydratedTerminals = activeSshTerminalsFromPtySessions(deviceId, sessions);
+      const hydratedServerIds = new Set(hydratedTerminals.map((terminal) => terminal.serverId));
+      const adoptedTerminals: ActiveSshTerminal[] = [];
+      for (const activeSsh of summary ? activeSshSessionsFromRuntimeSummary(summary) : []) {
+        if (hydratedServerIds.has(activeSsh.serverId)) {
+          continue;
+        }
+
+        try {
+          const response = await requestAttachServerSshPty(deviceId, activeSsh.serverId, activeSsh.localSessionId);
+          const sessionId = typeof response.sessionId === 'string' ? response.sessionId.trim() : '';
+          if (sessionId) {
+            adoptedTerminals.push({ deviceId, serverId: activeSsh.serverId, sessionId });
+            hydratedServerIds.add(activeSsh.serverId);
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      if (requestId != null && selectionRequestIdRef.current !== requestId) {
+        return;
+      }
+      const nextTerminals = [...hydratedTerminals, ...adoptedTerminals];
+      setActiveSshTerminals((previous) => [...previous.filter((terminal) => terminal.deviceId !== deviceId), ...nextTerminals]);
+    } catch {
+      return;
+    }
+  }
+
+  function loadActiveSshTerminalsFromSummary(deviceId: string, summary: RuntimeSummary, requestId?: number) {
+    if (requestId != null && selectionRequestIdRef.current !== requestId) {
+      return;
+    }
+
+    if (!runtimeSummaryHasActiveSsh(summary)) {
+      setActiveSshTerminals((previous) => previous.filter((terminal) => terminal.deviceId !== deviceId));
+      return;
+    }
+
+    void loadActiveSshTerminalsOnly(deviceId, requestId, summary);
+  }
 
   async function loadSelectedDevice(deviceId: string) {
     const requestId = selectionRequestIdRef.current + 1;
@@ -136,6 +264,7 @@ export function useAdminDashboard() {
 
         setRuntimeSummary(summaryPayload);
         setRuntimeSummaryError(null);
+        loadActiveSshTerminalsFromSummary(deviceId, summaryPayload, requestId);
       })
       .catch((err) => {
         if (selectionRequestIdRef.current !== requestId) {
@@ -190,6 +319,7 @@ export function useAdminDashboard() {
       const summaryPayload = await fetchRuntimeSummary(deviceId);
       setRuntimeSummary(summaryPayload);
       setRuntimeSummaryError(null);
+      loadActiveSshTerminalsFromSummary(deviceId, summaryPayload);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load runtime summary';
       setRuntimeSummary(null);
@@ -318,6 +448,22 @@ export function useAdminDashboard() {
     }
   }
 
+  function upsertTransfer(nextTransfer: TransferEntry) {
+    if (!nextTransfer?.transferId) {
+      return;
+    }
+
+    setTransfers((currentTransfers) => [
+      nextTransfer,
+      ...currentTransfers.filter((item) => item.transferId !== nextTransfer.transferId),
+    ].sort((left, right) => {
+      const leftTime = Date.parse(left.updatedAt || '') || 0;
+      const rightTime = Date.parse(right.updatedAt || '') || 0;
+      return rightTime - leftTime;
+    }).slice(0, transfersLimit));
+    setTransfersError(null);
+  }
+
   async function loadTransfers(deviceId: string) {
     setTransfersLoading(true);
 
@@ -364,6 +510,24 @@ export function useAdminDashboard() {
     } finally {
       setTransferActionLoading(false);
       setActiveTransferId(null);
+    }
+  }
+
+  async function runStartScpTransfer(deviceId: string, direction: ScpTransferDirection, payload: ScpTransferPayload) {
+    setTransferStartLoading(true);
+
+    try {
+      await startScpTransferRequest(deviceId, direction, payload);
+      setTransfersError(null);
+      setSelectedDeviceId(deviceId);
+      await Promise.allSettled([
+        loadTransfers(deviceId),
+        loadCommands(deviceId, { silent: true }),
+      ]);
+    } catch (err) {
+      setTransfersError(err instanceof Error ? err.message : 'Failed to start SCP transfer');
+    } finally {
+      setTransferStartLoading(false);
     }
   }
 
@@ -538,6 +702,30 @@ export function useAdminDashboard() {
     }
   }
 
+  async function runStartServerSshTerminal(deviceId: string, serverId: string) {
+    setDeviceActionLoadingId(deviceId);
+
+    try {
+      const response = await requestStartServerSshPty(deviceId, serverId);
+      const sessionId = response.sessionId;
+      if (!sessionId) {
+        throw new Error('Server SSH terminal did not return a session id');
+      }
+      setDeviceActionError(null);
+      setSelectedDeviceId(deviceId);
+      await refreshSnapshotData(deviceId);
+      setActiveSshTerminals((previous) => [
+        ...previous.filter((terminal) => !(terminal.deviceId === deviceId && terminal.serverId === serverId)),
+        { deviceId, serverId, sessionId },
+      ]);
+      scheduleSnapshotFollowUpRefresh(deviceId);
+    } catch (err) {
+      setDeviceActionError(err instanceof Error ? err.message : 'Failed to request server SSH terminal');
+    } finally {
+      setDeviceActionLoadingId(null);
+    }
+  }
+
   async function runRequestStopServerTunnel(deviceId: string, serverId: string) {
     setDeviceActionLoadingId(deviceId);
 
@@ -587,10 +775,12 @@ export function useAdminDashboard() {
       setTransfersError(null);
       setTransfersLoading(false);
       setTransferActionLoading(false);
+      setTransferStartLoading(false);
       setActiveTransferId(null);
       setTelemetry([]);
       setTelemetryError(null);
       setTelemetryLoading(false);
+      setActiveSshTerminals([]);
       return;
     }
 
@@ -616,14 +806,23 @@ export function useAdminDashboard() {
       return;
     }
 
-    const telemetrySub = subscribeTelemetryStream(selectedDeviceId, () => {
-      void loadTelemetry(selectedDeviceId);
-      if (selectedTunnelServerId) {
+    const telemetrySub = subscribeTelemetryStream(selectedDeviceId, (entry) => {
+      if (shouldRefreshRuntimeSummaryFromTelemetry(entry)) {
+        void loadRuntimeSummaryOnly(selectedDeviceId);
+      }
+      if (shouldRefetchTelemetryListFromTelemetry(entry)) {
+        void loadTelemetry(selectedDeviceId);
+      }
+      if (selectedTunnelServerId && shouldRefetchTelemetryListFromTelemetry(entry)) {
         void loadTunnelLogsOnly(selectedDeviceId, selectedTunnelServerId, { silent: true });
       }
     });
 
-    const transfersSub = subscribeTransfersStream(selectedDeviceId, () => {
+    const transfersSub = subscribeTransfersStream(selectedDeviceId, (transfer) => {
+      if (transfer?.transferId) {
+        upsertTransfer(transfer);
+        return;
+      }
       void loadTransfers(selectedDeviceId);
     });
 
@@ -679,6 +878,7 @@ export function useAdminDashboard() {
     transfersLoading,
     transfersError,
     transferActionLoading,
+    transferStartLoading,
     activeTransferId,
     telemetry,
     telemetryLoading,
@@ -713,6 +913,9 @@ export function useAdminDashboard() {
     },
     resumeTransfer: (transferId: string) => {
       void runTransferAction('resume', transferId);
+    },
+    startScpTransfer: (deviceId: string, direction: ScpTransferDirection, payload: ScpTransferPayload) => {
+      void runStartScpTransfer(deviceId, direction, payload);
     },
     dismissFinishedTransfers: () => {
       if (!selectedDeviceId) {
@@ -776,6 +979,10 @@ export function useAdminDashboard() {
     requestStopServerTunnel: (deviceId: string, serverId: string) => {
       void runRequestStopServerTunnel(deviceId, serverId);
     },
+    startServerSshTerminal: (deviceId: string, serverId: string) => {
+      void runStartServerSshTerminal(deviceId, serverId);
+    },
+    activeSshTerminals,
     retryRuntimeSummary: () => {
       if (selectedDeviceId) {
         void loadRuntimeSummaryOnly(selectedDeviceId);

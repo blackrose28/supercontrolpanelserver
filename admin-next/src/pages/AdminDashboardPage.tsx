@@ -48,6 +48,7 @@ export function AdminDashboardPage() {
     transfersLoading,
     transfersError,
     transferActionLoading,
+    transferStartLoading,
     activeTransferId,
     telemetry,
     telemetryLoading,
@@ -79,6 +80,7 @@ export function AdminDashboardPage() {
     dismissTransfer,
     forceRemoveTransfer,
     resumeTransfer,
+    startScpTransfer,
     dismissFinishedTransfers,
     refreshTelemetry,
     selectDevice,
@@ -89,6 +91,8 @@ export function AdminDashboardPage() {
     requestRestartBoundaryAuth,
     requestStartServerTunnel,
     requestStopServerTunnel,
+    startServerSshTerminal,
+    activeSshTerminals,
     requestStatusSnapshot,
     retryRuntimeSummary,
     retryRecentLogs,
@@ -197,6 +201,8 @@ export function AdminDashboardPage() {
               onRefreshTunnelLogs={refreshTunnelLogs}
               onRequestStartServerTunnel={requestStartServerTunnel}
               onRequestStopServerTunnel={requestStopServerTunnel}
+              onStartServerSshTerminal={startServerSshTerminal}
+              sshTerminals={activeSshTerminals}
               onRetry={retryRuntimeSummary}
             />
           </div>
@@ -254,12 +260,15 @@ export function AdminDashboardPage() {
               transfers={transfers}
               transfersLimit={transfersLimit}
               transferActionLoading={transferActionLoading}
+              transferStartLoading={transferStartLoading}
               activeTransferId={activeTransferId}
+              servers={runtimeSummary?.inventory?.servers || []}
               onRefresh={refreshTransfers}
               onStopTransfer={stopTransfer}
               onDismissTransfer={dismissTransfer}
               onForceRemoveTransfer={forceRemoveTransfer}
               onResumeTransfer={resumeTransfer}
+              onStartTransfer={startScpTransfer}
               onDismissFinished={dismissFinishedTransfers}
               onLimitChange={setTransfersLimit}
             />

@@ -12,6 +12,7 @@ import { AgentGateway } from '../agent/agent.gateway';
 import { PtySessionStore } from './pty-session.store';
 import { PtyHubService } from './pty-hub.service';
 import { PtyAuditStore } from './pty-audit.store';
+import { LogStore } from '../logs/log.store';
 
 @Controller('v1')
 export class PtyController {
@@ -23,6 +24,7 @@ export class PtyController {
     private readonly ptyAudit: PtyAuditStore,
     private readonly adminSessions: AdminSessionService,
     private readonly adminApiTokens: AdminApiTokenService,
+    private readonly logStore: LogStore,
   ) {}
 
   @Get('devices/:id/pty-sessions')
@@ -84,6 +86,148 @@ export class PtyController {
         actorId: actor.actorId,
       },
     );
+  }
+
+  @Post('devices/:id/request-start-server-ssh')
+  async requestStartServerSsh(
+    @Param('id') id: string,
+    @Body('serverId') serverId: string | undefined,
+    @Body('cols') cols: number | undefined,
+    @Body('rows') rows: number | undefined,
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    const principal = requireAdminMutationAuthorized(
+      auth,
+      cookie,
+      csrfToken,
+      this.adminSessions,
+      this.adminApiTokens,
+      ['device:control'],
+    );
+    const deviceId = this.requireDevice(id);
+    this.pruneTerminalSessions();
+    this.ptySessions.expireDetachedSessions(new Date().toISOString());
+    const normalizedServerId = String(serverId || '').trim();
+    if (!normalizedServerId) {
+      throw new HttpException(
+        { ok: false, code: 'SERVER_ID_REQUIRED', message: 'serverId is required' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    const normalizedCols = Number(cols || 120);
+    const normalizedRows = Number(rows || 32);
+    if (!Number.isInteger(normalizedCols) || normalizedCols < 1 || !Number.isInteger(normalizedRows) || normalizedRows < 1) {
+      throw new HttpException(
+        { ok: false, code: 'PTY_INVALID_SIZE', message: 'cols and rows must be positive integers' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    const actor = mapPrincipalToPtyActor(principal);
+    const result = this.agentGateway.requestStartServerSsh(deviceId, {
+      serverId: normalizedServerId,
+      sessionId: `server-ssh-${normalizedServerId}-${randomUUID()}`,
+      cols: normalizedCols,
+      rows: normalizedRows,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+    });
+    if (!result.ok) {
+      throw new HttpException(
+        { ok: false, code: result.reason ?? 'DEVICE_NOT_CONNECTED', message: 'Failed to request server SSH terminal' },
+        HttpStatus.CONFLICT,
+      );
+    }
+    let ack: { ok: true; payload: unknown; ts: string };
+    try {
+      ack = await this.agentGateway.awaitReqResponse(deviceId, result.reqSeq);
+    } catch (error) {
+      throw agentRequestErrorToHttpException(error);
+    }
+
+    return {
+      ...result,
+      agentAck: ack.payload,
+    };
+  }
+
+  @Post('devices/:id/request-attach-server-ssh')
+  async requestAttachServerSsh(
+    @Param('id') id: string,
+    @Body('serverId') serverId: string | undefined,
+    @Body('localSessionId') localSessionId: string | undefined,
+    @Body('cols') cols: number | undefined,
+    @Body('rows') rows: number | undefined,
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    const principal = requireAdminMutationAuthorized(
+      auth,
+      cookie,
+      csrfToken,
+      this.adminSessions,
+      this.adminApiTokens,
+      ['device:control'],
+    );
+    const deviceId = this.requireDevice(id);
+    this.pruneTerminalSessions();
+    this.ptySessions.expireDetachedSessions(new Date().toISOString());
+    const normalizedServerId = String(serverId || '').trim();
+    if (!normalizedServerId) {
+      throw new HttpException(
+        { ok: false, code: 'SERVER_ID_REQUIRED', message: 'serverId is required' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    const normalizedLocalSessionId = String(localSessionId || '').trim();
+    if (!normalizedLocalSessionId) {
+      throw new HttpException(
+        { ok: false, code: 'LOCAL_SESSION_ID_REQUIRED', message: 'localSessionId is required' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    const normalizedCols = Number(cols || 120);
+    const normalizedRows = Number(rows || 32);
+    if (!Number.isInteger(normalizedCols) || normalizedCols < 1 || !Number.isInteger(normalizedRows) || normalizedRows < 1) {
+      throw new HttpException(
+        { ok: false, code: 'PTY_INVALID_SIZE', message: 'cols and rows must be positive integers' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    const actor = mapPrincipalToPtyActor(principal);
+    const sessionId = `server-ssh-${normalizedServerId}-${randomUUID()}`;
+    this.ptyHub.clearScrollback(sessionId);
+    const result = this.agentGateway.requestAttachServerSsh(deviceId, {
+      serverId: normalizedServerId,
+      sessionId,
+      localSessionId: normalizedLocalSessionId,
+      cols: normalizedCols,
+      rows: normalizedRows,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+    });
+    if (!result.ok) {
+      throw new HttpException(
+        { ok: false, code: result.reason ?? 'DEVICE_NOT_CONNECTED', message: 'Failed to attach server SSH terminal' },
+        HttpStatus.CONFLICT,
+      );
+    }
+    this.seedScrollbackFromLocalSession(deviceId, normalizedLocalSessionId, result.sessionId);
+
+    let ack: { ok: true; payload: unknown; ts: string };
+    try {
+      ack = await this.agentGateway.awaitReqResponse(deviceId, result.reqSeq);
+    } catch (error) {
+      this.ptyHub.clearScrollback(result.sessionId);
+      throw agentRequestErrorToHttpException(error);
+    }
+
+    return {
+      ...result,
+      agentAck: ack.payload,
+    };
   }
 
   @Post('devices/:id/pty/attach')
@@ -296,6 +440,17 @@ export class PtyController {
     };
   }
 
+  private seedScrollbackFromLocalSession(deviceId: string, localSessionId: string, remoteSessionId: string) {
+    const events = this.logStore.listPtyOutputBySession(deviceId, localSessionId, 200);
+    for (const event of events) {
+      const payload = isRecord(event.payload) ? event.payload : null;
+      const data = typeof payload?.data === 'string' ? payload.data : '';
+      if (data) {
+        this.ptyHub.appendOutput(remoteSessionId, data);
+      }
+    }
+  }
+
   private requireDevice(id: string): string {
     const deviceId = id.trim();
     if (!deviceId) {
@@ -331,6 +486,39 @@ export class PtyController {
       this.ptyHub.clearScrollback(record.sessionId);
     }
   }
+}
+
+function agentRequestErrorToHttpException(error: unknown): HttpException {
+  if (error instanceof HttpException) {
+    return error;
+  }
+
+  const errorRecord = isRecord(error) ? error : null;
+  const payload = isRecord(errorRecord?.payload) ? errorRecord.payload : null;
+  const code = readString(payload?.error) || readString(errorRecord?.code) || 'AGENT_NACK';
+  const message =
+    readString(payload?.message)
+    || readString(errorRecord?.message)
+    || (error instanceof Error ? error.message : '')
+    || 'Agent rejected server SSH terminal request';
+
+  return new HttpException(
+    {
+      ok: false,
+      code,
+      message,
+      agentError: payload ?? errorRecord ?? null,
+    },
+    HttpStatus.CONFLICT,
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function mapPrincipalToPtyActor(principal: AdminAuthPrincipal): { actorType: string; actorId: string | null } {

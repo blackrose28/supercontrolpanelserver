@@ -65,6 +65,29 @@ export type DeviceCommandResponse = {
   };
 };
 
+export type PtyOpenResponse = {
+  ok?: boolean;
+  deviceId?: string;
+  serverId?: string;
+  sessionId?: string;
+  reqSeq?: number;
+  requestedAt?: string;
+  agentAck?: {
+    localSessionId?: string;
+    sessionId?: string;
+  } | null;
+};
+
+export type PtySessionEntry = {
+  sessionId?: string;
+  deviceId?: string;
+  state?: string;
+};
+
+type PtySessionsResponse = {
+  items?: PtySessionEntry[];
+};
+
 type CommandHistoryResponse = {
   items?: CommandHistoryEntry[];
 };
@@ -78,6 +101,7 @@ export type TransferEntry = {
   direction?: string;
   state?: string;
   updatedAt?: string;
+  serverId?: string;
   localPath?: string;
   remotePath?: string;
   sessionId?: string | null;
@@ -99,6 +123,21 @@ export type TransferEntry = {
 type TransferMutationResponse = {
   ok?: boolean;
   transferId?: string;
+};
+
+export type ScpTransferDirection = 'upload' | 'download';
+
+export type ScpTransferPayload = {
+  serverId: string;
+  localPath: string;
+  remotePath: string;
+  recursive?: boolean;
+  overwritePolicy?: 'prompt' | 'force' | 'skip';
+  verifyChecksum?: boolean;
+  followSymlinks?: boolean;
+  preserveMtime?: boolean;
+  preserveMode?: boolean;
+  rateLimitKbps?: number | null;
 };
 
 type TransferAction = 'stop' | 'dismiss' | 'force-remove' | 'dismiss-finished';
@@ -193,7 +232,7 @@ async function postDeviceRequest(
   }
 
   if (!response.ok) {
-    throw new Error(failureMessage);
+    throw new Error(await responseErrorMessage(response, failureMessage));
   }
 
   return parseJsonOrThrow<DeviceCommandResponse>(response, `Failed to parse ${path} response`);
@@ -214,6 +253,40 @@ type TransferResponse = {
 type TelemetryResponse = {
   events?: TelemetryEntry[];
 };
+
+async function responseErrorMessage(response: Response, fallback: string): Promise<string> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return fallback;
+  }
+
+  const bodyRecord = isRecord(body) ? body : null;
+  const payload = isRecord(bodyRecord?.payload) ? bodyRecord.payload : null;
+  const agentError = isRecord(bodyRecord?.agentError) ? bodyRecord.agentError : null;
+  const code = readString(bodyRecord?.code) || readString(bodyRecord?.error) || readString(payload?.error) || readString(agentError?.error);
+  const message = readString(bodyRecord?.message) || readString(payload?.message) || readString(agentError?.message);
+
+  if (code && message) {
+    return `${fallback}: ${code} - ${message}`;
+  }
+  if (message) {
+    return `${fallback}: ${message}`;
+  }
+  if (code) {
+    return `${fallback}: ${code}`;
+  }
+  return fallback;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
 
 async function parseJsonOrThrow<T>(response: Response, parseErrorMessage: string): Promise<T> {
   try {
@@ -296,6 +369,63 @@ export async function requestStartServerTunnel(deviceId: string, serverId: strin
     'Failed to request server tunnel start',
     { serverId },
   );
+}
+
+export async function fetchPtySessions(deviceId: string): Promise<PtySessionEntry[]> {
+  const response = await fetch(`/v1/devices/${encodeURIComponent(deviceId)}/pty-sessions`, {
+    credentials: 'same-origin',
+  });
+
+  if (redirectIfUnauthorized(response)) {
+    throw new Error('Redirecting to admin login');
+  }
+
+  if (!response.ok) {
+    throw new Error(await responseErrorMessage(response, 'Failed to load PTY sessions'));
+  }
+
+  const payload = await parseJsonOrThrow<PtySessionsResponse>(response, 'Failed to parse PTY sessions response');
+  return Array.isArray(payload.items) ? payload.items : [];
+}
+
+export async function requestStartServerSshPty(deviceId: string, serverId: string, cols = 120, rows = 32): Promise<PtyOpenResponse> {
+  const csrfToken = getAdminCsrfToken();
+  const response = await fetch(`/v1/devices/${encodeURIComponent(deviceId)}/request-start-server-ssh`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ csrfToken, serverId, cols, rows }),
+  });
+
+  if (redirectIfUnauthorized(response)) {
+    throw new Error('Redirecting to admin login');
+  }
+
+  if (!response.ok) {
+    throw new Error(await responseErrorMessage(response, 'Failed to request server SSH terminal'));
+  }
+
+  return parseJsonOrThrow<PtyOpenResponse>(response, 'Failed to parse server SSH terminal response');
+}
+
+export async function requestAttachServerSshPty(deviceId: string, serverId: string, localSessionId: string, cols = 120, rows = 32): Promise<PtyOpenResponse> {
+  const csrfToken = getAdminCsrfToken();
+  const response = await fetch(`/v1/devices/${encodeURIComponent(deviceId)}/request-attach-server-ssh`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ csrfToken, serverId, localSessionId, cols, rows }),
+  });
+
+  if (redirectIfUnauthorized(response)) {
+    throw new Error('Redirecting to admin login');
+  }
+
+  if (!response.ok) {
+    throw new Error(await responseErrorMessage(response, 'Failed to attach server SSH terminal'));
+  }
+
+  return parseJsonOrThrow<PtyOpenResponse>(response, 'Failed to parse server SSH terminal attach response');
 }
 
 export async function requestStopServerTunnel(deviceId: string, serverId: string): Promise<DeviceCommandResponse> {
@@ -389,6 +519,49 @@ export async function fetchTransfers(deviceId: string, limit = 50): Promise<Tran
   return Array.isArray(payload?.items) ? payload.items : [];
 }
 
+export async function startScpTransfer(
+  deviceId: string,
+  direction: ScpTransferDirection,
+  payload: ScpTransferPayload,
+): Promise<DeviceCommandResponse> {
+  const csrfToken = getAdminCsrfToken();
+  const commandType = direction === 'download' ? 'start_scp_download' : 'start_scp_upload';
+  const response = await fetch('/v1/commands', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      csrfToken,
+      deviceId,
+      commandType,
+      payload: {
+        serverId: payload.serverId,
+        localPath: payload.localPath,
+        remotePath: payload.remotePath,
+        recursive: payload.recursive ?? false,
+        overwritePolicy: payload.overwritePolicy ?? 'prompt',
+        verifyChecksum: payload.verifyChecksum ?? false,
+        followSymlinks: payload.followSymlinks ?? false,
+        preserveMtime: payload.preserveMtime ?? false,
+        preserveMode: payload.preserveMode ?? false,
+        rateLimitKbps: payload.rateLimitKbps ?? null,
+      },
+    }),
+  });
+
+  if (redirectIfUnauthorized(response)) {
+    throw new Error('Redirecting to admin login');
+  }
+
+  if (!response.ok) {
+    throw new Error(await responseErrorMessage(response, 'Failed to start SCP transfer'));
+  }
+
+  return parseJsonOrThrow<DeviceCommandResponse>(response, 'Failed to parse SCP transfer response');
+}
+
 export async function stopTransfer(deviceId: string, transferId: string): Promise<TransferMutationResponse> {
   return postTransferAction(deviceId, transferId, 'stop');
 }
@@ -450,7 +623,19 @@ type StreamSubscription = {
   unsubscribe: () => void;
 };
 
-function subscribeStream(url: string, onMessage: () => void): StreamSubscription {
+function parseStreamData<T>(event: MessageEvent): T | undefined {
+  if (typeof event.data !== 'string' || !event.data.trim()) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(event.data) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+function subscribeStream<T>(url: string, eventName: string, onMessage: (data?: T) => void): StreamSubscription {
   if (typeof EventSource === 'undefined') {
     return {
       unsubscribe: () => {},
@@ -458,9 +643,14 @@ function subscribeStream(url: string, onMessage: () => void): StreamSubscription
   }
 
   const source = new EventSource(url, { withCredentials: true });
-  source.onmessage = () => {
-    onMessage();
+  const handleMessage = (event?: MessageEvent) => {
+    onMessage(event ? parseStreamData<T>(event) : undefined);
   };
+
+  if (typeof source.addEventListener === 'function') {
+    source.addEventListener(eventName, handleMessage as EventListener);
+  }
+  source.onmessage = handleMessage;
 
   return {
     unsubscribe: () => {
@@ -469,16 +659,16 @@ function subscribeStream(url: string, onMessage: () => void): StreamSubscription
   };
 }
 
-export function subscribeTelemetryStream(deviceId: string, onMessage: () => void): StreamSubscription {
-  return subscribeStream(`/v1/logs/stream?deviceId=${encodeURIComponent(deviceId)}`, onMessage);
+export function subscribeTelemetryStream(deviceId: string, onMessage: (entry?: TelemetryEntry) => void): StreamSubscription {
+  return subscribeStream<TelemetryEntry>(`/v1/logs/stream?deviceId=${encodeURIComponent(deviceId)}`, 'telemetry', onMessage);
 }
 
-export function subscribeTransfersStream(deviceId: string, onMessage: () => void): StreamSubscription {
-  return subscribeStream(`/v1/file-transfers/stream?deviceId=${encodeURIComponent(deviceId)}`, onMessage);
+export function subscribeTransfersStream(deviceId: string, onMessage: (entry?: TransferEntry) => void): StreamSubscription {
+  return subscribeStream<TransferEntry>(`/v1/file-transfers/stream?deviceId=${encodeURIComponent(deviceId)}`, 'file_transfer', onMessage);
 }
 
 export function subscribeCommandsStream(deviceId: string, onMessage: () => void): StreamSubscription {
-  return subscribeStream(`/v1/commands/stream?deviceId=${encodeURIComponent(deviceId)}`, onMessage);
+  return subscribeStream(`/v1/commands/stream?deviceId=${encodeURIComponent(deviceId)}`, 'command', () => onMessage());
 }
 
 export function buildTelemetryExportUrl(deviceId: string, filters: TelemetryFilters = {}): string {

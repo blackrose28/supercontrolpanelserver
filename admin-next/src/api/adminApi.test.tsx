@@ -4,18 +4,22 @@ import {
   fetchCommands,
   fetchDeviceDetails,
   fetchDevices,
+  fetchPtySessions,
   buildTelemetryExportUrl,
   fetchRecentLogs,
   fetchRuntimeSummary,
   fetchTelemetry,
   fetchTransfers,
   requestRecentLogs,
+  requestAttachServerSshPty,
+  requestStartServerSshPty,
   requestStatusSnapshot,
   stopTransfer,
   dismissTransfer,
   forceRemoveTransfer,
   dismissFinishedTransfers,
   resumeTransfer,
+  startScpTransfer,
   subscribeTelemetryStream,
   subscribeCommandsStream,
   subscribeTransfersStream,
@@ -128,6 +132,110 @@ describe('adminApi', () => {
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ csrfToken: 'csrf-123' }),
+    });
+  });
+
+  it('fetchPtySessions returns device PTY sessions', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [
+          { sessionId: 'server-ssh-srv-1-11111111-1111-4111-8111-111111111111', state: 'open' },
+        ],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchPtySessions('dev-1')).resolves.toEqual([
+      { sessionId: 'server-ssh-srv-1-11111111-1111-4111-8111-111111111111', state: 'open' },
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledWith('/v1/devices/dev-1/pty-sessions', {
+      credentials: 'same-origin',
+    });
+  });
+
+  it('requestStartServerSshPty includes server conflict details in errors', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        ok: false,
+        code: 'PTY_SPAWN_ERROR',
+        message: 'Boundary tunnel is not running for this server.',
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {
+      ...document,
+      querySelector: vi.fn().mockReturnValue({ getAttribute: () => 'csrf-ssh' }),
+      cookie: '',
+    } as unknown as Document);
+
+    await expect(requestStartServerSshPty('dev-1', 'srv-1', 100, 30)).rejects.toThrow(
+      'Failed to request server SSH terminal: PTY_SPAWN_ERROR - Boundary tunnel is not running for this server.',
+    );
+  });
+
+  it('requestStartServerSshPty posts server id and terminal size', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        deviceId: 'dev-1',
+        serverId: 'srv-1',
+        sessionId: 'requested-ssh-sess-1',
+        agentAck: { localSessionId: 'local-ssh-sess-1' },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {
+      ...document,
+      querySelector: vi.fn().mockReturnValue({ getAttribute: () => 'csrf-ssh' }),
+      cookie: '',
+    } as unknown as Document);
+
+    await expect(requestStartServerSshPty('dev-1', 'srv-1', 100, 30)).resolves.toMatchObject({
+      ok: true,
+      sessionId: 'requested-ssh-sess-1',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/v1/devices/dev-1/request-start-server-ssh', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ csrfToken: 'csrf-ssh', serverId: 'srv-1', cols: 100, rows: 30 }),
+    });
+  });
+
+  it('requestAttachServerSshPty posts local PTY id for adoption', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        deviceId: 'dev-1',
+        serverId: 'srv-1',
+        sessionId: 'server-ssh-srv-1-11111111-1111-4111-8111-111111111111',
+        agentAck: { localSessionId: 'local-ssh-session-1' },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {
+      ...document,
+      querySelector: vi.fn().mockReturnValue({ getAttribute: () => 'csrf-ssh' }),
+      cookie: '',
+    } as unknown as Document);
+
+    await expect(requestAttachServerSshPty('dev-1', 'srv-1', 'local-ssh-session-1', 100, 30)).resolves.toMatchObject({
+      ok: true,
+      sessionId: 'server-ssh-srv-1-11111111-1111-4111-8111-111111111111',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/v1/devices/dev-1/request-attach-server-ssh', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ csrfToken: 'csrf-ssh', serverId: 'srv-1', localSessionId: 'local-ssh-session-1', cols: 100, rows: 30 }),
     });
   });
 
@@ -282,6 +390,79 @@ describe('adminApi', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }));
 
     await expect(fetchTransfers('dev-1')).rejects.toThrow('Failed to load transfers');
+  });
+
+  it('startScpTransfer posts a start_scp command with transfer options', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, command: { commandId: 'cmd-transfer', payload: { transferId: 'tr-1' } } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {
+      ...document,
+      querySelector: vi.fn().mockReturnValue({ getAttribute: () => 'csrf-transfer' }),
+      cookie: '',
+    } as unknown as Document);
+
+    await expect(startScpTransfer('dev-1', 'upload', {
+      serverId: 'srv-1',
+      localPath: '/tmp/report.csv',
+      remotePath: '/var/tmp/report.csv',
+      recursive: true,
+      overwritePolicy: 'force',
+      verifyChecksum: true,
+      followSymlinks: true,
+      preserveMtime: true,
+      preserveMode: true,
+      rateLimitKbps: 512,
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(fetchMock).toHaveBeenCalledWith('/v1/commands', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        csrfToken: 'csrf-transfer',
+        deviceId: 'dev-1',
+        commandType: 'start_scp_upload',
+        payload: {
+          serverId: 'srv-1',
+          localPath: '/tmp/report.csv',
+          remotePath: '/var/tmp/report.csv',
+          recursive: true,
+          overwritePolicy: 'force',
+          verifyChecksum: true,
+          followSymlinks: true,
+          preserveMtime: true,
+          preserveMode: true,
+          rateLimitKbps: 512,
+        },
+      }),
+    });
+  });
+
+  it('startScpTransfer uses start_scp_download for downloads', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {
+      ...document,
+      querySelector: vi.fn().mockReturnValue({ getAttribute: () => 'csrf-transfer' }),
+      cookie: '',
+    } as unknown as Document);
+
+    await startScpTransfer('dev-1', 'download', {
+      serverId: 'srv-1',
+      localPath: '/tmp/report.csv',
+      remotePath: '/var/tmp/report.csv',
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.commandType).toBe('start_scp_download');
+    expect(body.payload).toMatchObject({
+      serverId: 'srv-1',
+      localPath: '/tmp/report.csv',
+      remotePath: '/var/tmp/report.csv',
+    });
   });
 
   it('fetchTelemetry encodes deviceId and telemetry filters', async () => {
@@ -447,6 +628,31 @@ describe('adminApi', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+
+  it('subscribeTelemetryStream passes parsed telemetry records to subscribers', async () => {
+    const close = vi.fn();
+    const listeners = new Map<string, (event: MessageEvent) => void>();
+    const ctor = vi.fn(function(_url: string) {
+      return {
+        addEventListener: (name: string, handler: EventListener) => {
+          listeners.set(name, handler as (event: MessageEvent) => void);
+        },
+        close,
+      };
+    });
+
+    vi.stubGlobal('EventSource', ctor as unknown as typeof EventSource);
+    const onMessage = vi.fn();
+
+    const sub = subscribeTelemetryStream('dev 1', onMessage);
+
+    listeners.get('telemetry')?.({ data: JSON.stringify({ id: 'evt-1', type: 'pty-output', payload: { data: 'a' } }) } as MessageEvent);
+
+    expect(onMessage).toHaveBeenCalledWith({ id: 'evt-1', type: 'pty-output', payload: { data: 'a' } });
+    sub.unsubscribe();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it('subscribeTransfersStream opens stream and unsubscribes', async () => {
     const close = vi.fn();
     const ctor = vi.fn(function(this: { onmessage: null | (() => void) }) {
@@ -465,6 +671,31 @@ describe('adminApi', () => {
     instance.onmessage?.();
     expect(onMessage).toHaveBeenCalledTimes(1);
 
+    sub.unsubscribe();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+
+  it('subscribeTransfersStream listens to file_transfer events with parsed records', async () => {
+    const close = vi.fn();
+    const listeners = new Map<string, (event: MessageEvent) => void>();
+    const ctor = vi.fn(function(_url: string) {
+      return {
+        addEventListener: (name: string, handler: EventListener) => {
+          listeners.set(name, handler as (event: MessageEvent) => void);
+        },
+        close,
+      };
+    });
+
+    vi.stubGlobal('EventSource', ctor as unknown as typeof EventSource);
+    const onMessage = vi.fn();
+
+    const sub = subscribeTransfersStream('dev 1', onMessage);
+
+    listeners.get('file_transfer')?.({ data: JSON.stringify({ transferId: 'tr-1', percent: 52 }) } as MessageEvent);
+
+    expect(onMessage).toHaveBeenCalledWith({ transferId: 'tr-1', percent: 52 });
     sub.unsubscribe();
     expect(close).toHaveBeenCalledTimes(1);
   });

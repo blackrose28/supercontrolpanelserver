@@ -25,6 +25,8 @@ import {
   requestStartServerTunnel as requestStartServerTunnelRequest,
   requestRestartOpenvpn as requestRestartOpenvpnRequest,
   requestRestartServerSsh as requestRestartServerSshRequest,
+  requestAttachServerSsh as requestAttachServerSshRequest,
+  requestStartServerSsh as requestStartServerSshRequest,
   requestRestartServerTunnel as requestRestartServerTunnelRequest,
   requestStopServerTunnel as requestStopServerTunnelRequest,
   requestStatusSnapshot as requestStatusSnapshotRequest,
@@ -33,6 +35,11 @@ import {
 } from './agent-request-handler';
 import { handleAgentAck, handleAgentCommandStatus, handleAgentFunctionStatus, handleAgentHeartbeat, handleAgentInventory, handleAgentNack, handleAgentPtyExit, handleAgentPtyOutput, handleAgentRecentLogs, handleAgentStatusSnapshot, handleAgentTransferProgress, handleAgentTransferStatus } from './agent-event-handler';
 import { routeAgentRawMessage } from './agent-message-router';
+
+type CompletedReqResponse =
+  | { kind: 'ack'; payload: unknown; ts: string }
+  | { kind: 'nack'; error: unknown };
+
 @WebSocketGateway({ path: '/agent' })
 export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
@@ -48,6 +55,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
       timer: NodeJS.Timeout;
     }
   >();
+  private readonly completedReqResponses = new Map<string, CompletedReqResponse>();
 
   constructor(
     private deviceStore: DeviceStore,
@@ -238,6 +246,40 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     );
   }
 
+  requestStartServerSsh(
+    deviceId: string,
+    input: { serverId: string; sessionId: string; cols: number; rows: number; actorType?: string; actorId?: string | null },
+    commandId?: string,
+  ) {
+    return requestStartServerSshRequest(
+      {
+        deviceStore: this.deviceStore,
+        ptySessionStore: this.ptySessionStore,
+        sendMessage: this.sendMessage.bind(this),
+      },
+      deviceId,
+      input,
+      commandId,
+    );
+  }
+
+  requestAttachServerSsh(
+    deviceId: string,
+    input: { serverId: string; sessionId: string; localSessionId: string; cols: number; rows: number; actorType?: string; actorId?: string | null },
+    commandId?: string,
+  ) {
+    return requestAttachServerSshRequest(
+      {
+        deviceStore: this.deviceStore,
+        ptySessionStore: this.ptySessionStore,
+        sendMessage: this.sendMessage.bind(this),
+      },
+      deviceId,
+      input,
+      commandId,
+    );
+  }
+
   dispatchFileOpCommand(
     deviceId: string,
     type: string,
@@ -257,6 +299,16 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   awaitReqResponse(deviceId: string, reqSeq: number, timeoutMs = 30_000) {
+    const key = `${deviceId}:${reqSeq}`;
+    const completed = this.completedReqResponses.get(key);
+    if (completed) {
+      this.completedReqResponses.delete(key);
+      if (completed.kind === 'ack') {
+        return Promise.resolve({ ok: true as const, payload: completed.payload, ts: completed.ts });
+      }
+      return Promise.reject(completed.error);
+    }
+
     return new Promise<{ ok: true; payload: unknown; ts: string }>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingReqResponses.delete(reqSeq);
@@ -393,6 +445,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
       envelope,
       client,
       pendingReqResponses: this.pendingReqResponses,
+      completedReqResponses: this.completedReqResponses,
       commandStore: this.commandStore,
       ptySessionStore: this.ptySessionStore,
       ptyAudit: this.ptyAudit,
@@ -408,6 +461,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
       envelope,
       client,
       pendingReqResponses: this.pendingReqResponses,
+      completedReqResponses: this.completedReqResponses,
       commandStore: this.commandStore,
       ptySessionStore: this.ptySessionStore,
     });
