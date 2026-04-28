@@ -66,6 +66,8 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal' }: SshTermin
     xtermRef.current = xterm;
     fitAddonRef.current = fitAddon;
 
+    let cleanedUp = false;
+
     const socket = new WebSocket(getPtyWebSocketUrl());
     socketRef.current = socket;
     setState('connecting');
@@ -125,11 +127,13 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal' }: SshTermin
 
     socket.addEventListener('close', () => setState('closed'));
     socket.addEventListener('error', () => {
+      if (cleanedUp) return;
       setState('error');
       xterm.writeln('\r\nSSH terminal websocket error.\r\n');
     });
 
     return () => {
+      cleanedUp = true;
       dataDisposable.dispose();
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({
@@ -141,7 +145,9 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal' }: SshTermin
           },
         }));
       }
-      socket.close();
+      if (socket.readyState !== WebSocket.CLOSED) {
+        socket.close();
+      }
       xterm.dispose();
       if (socketRef.current === socket) {
         socketRef.current = null;

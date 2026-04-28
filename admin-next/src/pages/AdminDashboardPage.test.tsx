@@ -2,6 +2,18 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AdminDashboardPage } from './AdminDashboardPage';
 
+vi.mock('../components/TotpSection', () => ({
+  TotpSection: () => null,
+}));
+
+vi.mock('../components/SessionSection', () => ({
+  SessionSection: () => null,
+}));
+
+vi.mock('../components/AuditLogSection', () => ({
+  AuditLogSection: () => null,
+}));
+
 vi.mock('../hooks/useAdminDashboard', () => ({
   useAdminDashboard: () => ({
     devices: [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: '2026-04-20T00:00:00.000Z' }],

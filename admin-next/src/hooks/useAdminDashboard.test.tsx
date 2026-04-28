@@ -20,6 +20,7 @@ function HookHarness() {
         onRequestRecentLogs={model.requestRecentLogs}
         onRequestRestartOpenvpn={model.requestRestartOpenvpn}
         onRequestRestartBoundaryAuth={model.requestRestartBoundaryAuth}
+        onDeleteDevice={model.deleteDevice}
         deviceActionLoadingId={model.deviceActionLoadingId}
         deviceActionError={model.deviceActionError}
       />
@@ -1306,6 +1307,80 @@ describe('useAdminDashboard', () => {
         credentials: 'same-origin',
       });
     });
+  });
+
+  it('updates device status when device-connected stream event is received', async () => {
+    const deviceStreamListeners = new Map<string, (event: MessageEvent) => void>();
+    const otherListeners = new Map<string, (event: MessageEvent) => void>();
+    const eventSourceCtor = vi.fn(function(this: { onmessage: null | (() => void) }, url: string) {
+      this.onmessage = null;
+      if (url === '/v1/devices/stream') {
+        return {
+          addEventListener: (name: string, handler: EventListener) => {
+            deviceStreamListeners.set(name, handler as (event: MessageEvent) => void);
+          },
+          close: vi.fn(),
+        };
+      }
+      return {
+        addEventListener: (name: string, handler: EventListener) => {
+          otherListeners.set(name, handler as (event: MessageEvent) => void);
+        },
+        onmessage: null,
+        close: vi.fn(),
+      };
+    });
+    vi.stubGlobal('EventSource', eventSourceCtor as unknown as typeof EventSource);
+
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'disconnected', os: 'linux', lastSeenAt: null }] });
+      return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    render(<HookHarness />);
+    await waitFor(() => expect(screen.getByText('disconnected')).toBeInTheDocument());
+
+    deviceStreamListeners.get('device-connected')?.({ data: JSON.stringify({ deviceId: 'dev-1', status: 'connected', lastSeenAt: '2026-04-28T00:00:00.000Z' }) } as MessageEvent);
+
+    await waitFor(() => expect(screen.getByText('connected')).toBeInTheDocument());
+  });
+
+  it('updates device status when device-disconnected stream event is received', async () => {
+    const deviceStreamListeners = new Map<string, (event: MessageEvent) => void>();
+    const otherListeners = new Map<string, (event: MessageEvent) => void>();
+    const eventSourceCtor = vi.fn(function(this: { onmessage: null | (() => void) }, url: string) {
+      this.onmessage = null;
+      if (url === '/v1/devices/stream') {
+        return {
+          addEventListener: (name: string, handler: EventListener) => {
+            deviceStreamListeners.set(name, handler as (event: MessageEvent) => void);
+          },
+          close: vi.fn(),
+        };
+      }
+      return {
+        addEventListener: (name: string, handler: EventListener) => {
+          otherListeners.set(name, handler as (event: MessageEvent) => void);
+        },
+        onmessage: null,
+        close: vi.fn(),
+      };
+    });
+    vi.stubGlobal('EventSource', eventSourceCtor as unknown as typeof EventSource);
+
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
+      return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    render(<HookHarness />);
+    await waitFor(() => expect(screen.getByText('connected')).toBeInTheDocument());
+
+    deviceStreamListeners.get('device-disconnected')?.({ data: JSON.stringify({ deviceId: 'dev-1', status: 'disconnected', lastSeenAt: '2026-04-28T01:00:00.000Z' }) } as MessageEvent);
+
+    await waitFor(() => expect(screen.getByText('disconnected')).toBeInTheDocument());
   });
 
   it('runs clear finished transfers action and refreshes transfers', async () => {

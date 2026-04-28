@@ -58,7 +58,9 @@ export class DatabaseService {
       CREATE TABLE IF NOT EXISTS admin_sessions (
         token TEXT PRIMARY KEY,
         expiresAt INTEGER NOT NULL,
-        createdAt INTEGER NOT NULL
+        createdAt INTEGER NOT NULL,
+        ip TEXT,
+        userAgent TEXT
       );
 
       CREATE TABLE IF NOT EXISTS admin_api_tokens (
@@ -220,6 +222,39 @@ export class DatabaseService {
         FOREIGN KEY (deviceId) REFERENCES devices(id)
       );
 
+      CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+        key TEXT PRIMARY KEY,
+        count INTEGER NOT NULL,
+        resetAt INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_login_failures (
+        clientId TEXT PRIMARY KEY,
+        failureCount INTEGER NOT NULL DEFAULT 0,
+        lastFailureAt INTEGER NOT NULL,
+        lockedUntil INTEGER
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_totp (
+        id INTEGER PRIMARY KEY,
+        encryptedSecret TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        createdAt INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_totp_recovery (
+        codeHash TEXT PRIMARY KEY,
+        used INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event TEXT NOT NULL,
+        actor TEXT,
+        details TEXT,
+        createdAt INTEGER NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_devices_agent_token
         ON devices(agentToken);
 
@@ -315,6 +350,16 @@ export class DatabaseService {
     }
     if (!fileTransferColumns.some((column) => column.name === 'finalizeSeen')) {
       this.db.exec(`ALTER TABLE file_transfers ADD COLUMN finalizeSeen INTEGER NOT NULL DEFAULT 0;`);
+    }
+
+    const sessionColumns = this.db
+      .prepare(`PRAGMA table_info(admin_sessions)`)
+      .all() as Array<{ name?: string }>;
+    if (!sessionColumns.some((column) => column.name === 'ip')) {
+      this.db.exec(`ALTER TABLE admin_sessions ADD COLUMN ip TEXT;`);
+    }
+    if (!sessionColumns.some((column) => column.name === 'userAgent')) {
+      this.db.exec(`ALTER TABLE admin_sessions ADD COLUMN userAgent TEXT;`);
     }
   }
 }

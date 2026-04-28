@@ -962,6 +962,24 @@ code {
   background: #fee2e2;
 }
 
+.device-status-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.device-status-connected {
+  color: #047857;
+  background: #dcfce7;
+}
+
+.device-status-disconnected {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
 .transfer-card {
   border: 1px solid #e5e7eb;
   border-radius: 8px;

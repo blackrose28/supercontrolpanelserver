@@ -4,6 +4,22 @@ import type { RecentLogEntry, RuntimeSummary } from './api/adminApi';
 import type { DeviceSummary } from './types/device';
 import App from './App';
 
+vi.mock('./components/TotpSection', () => ({
+  TotpSection: () => null,
+}));
+
+vi.mock('./components/SessionSection', () => ({
+  SessionSection: () => null,
+}));
+
+vi.mock('./components/LogoutButton', () => ({
+  LogoutButton: () => null,
+}));
+
+vi.mock('./components/AuditLogSection', () => ({
+  AuditLogSection: () => null,
+}));
+
 type FetchResponse<T> = {
   ok: boolean;
   json: () => Promise<T>;

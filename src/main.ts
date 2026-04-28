@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { json, urlencoded } from 'express';
 import { NestFactory } from '@nestjs/core';
 import { WsAdapter } from '@nestjs/platform-ws';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -7,11 +8,17 @@ import { AppModule } from './app.module';
 import { validateAuthConfig } from './config/auth';
 import { CONTENT_SECURITY_POLICY } from './security-headers';
 import { isAdminNextHashedAssetPath } from './admin-next-cache';
+import { buildCorsOptions } from './config/cors';
 
 async function bootstrap() {
   validateAuthConfig();
   const port = Number(process.env.PORT) || 3000;
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bodyParser: false,
+  });
+
+  app.use(json({ limit: '1mb' }));
+  app.use(urlencoded({ extended: true, limit: '1mb' }));
 
   app.setViewEngine('ejs');
   app.setBaseViewsDir(join(__dirname, '..', 'views'));
@@ -43,7 +50,7 @@ async function bootstrap() {
   });
 
   app.useWebSocketAdapter(new WsAdapter(app));
-  app.enableCors();
+  app.enableCors(buildCorsOptions());
   await app.listen(port);
   console.log(`CC Server listening on http://localhost:${port}`);
 }

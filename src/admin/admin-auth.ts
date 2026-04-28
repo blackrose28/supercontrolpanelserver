@@ -1,9 +1,14 @@
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomInt } from 'node:crypto';
 import { getAdminApiToken } from '../config/auth';
 import { AdminSessionService } from './admin-session.service';
 import { Response } from 'express';
 import { AdminApiTokenScope, AdminApiTokenService } from './admin-api-token.service';
+
+export function authFailureDelay(): Promise<void> {
+  const ms = randomInt(50, 201);
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export const ADMIN_SESSION_COOKIE = 'cc_admin_session';
 export const ADMIN_CSRF_COOKIE = 'cc_admin_csrf';

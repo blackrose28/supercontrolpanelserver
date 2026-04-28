@@ -9,6 +9,9 @@ import { LogsController } from './logs/logs.controller';
 import { LogStore } from './logs/log.store';
 import { DatabaseService } from './database/database.service';
 import { AdminSessionService } from './admin/admin-session.service';
+import { AdminLockoutService } from './admin/admin-lockout.service';
+import { TotpService } from './admin/totp.service';
+import { AdminAuditService } from './admin/admin-audit.service';
 import { RateLimitService } from './rate-limit/rate-limit.service';
 import { AdminApiTokenService } from './admin/admin-api-token.service';
 import { CommandStore } from './commands/command.store';
@@ -30,13 +33,16 @@ import { RemoteBrowserController } from './file-ops/remote-browser.controller';
 
 @Module({
   imports: [],
-  controllers: [DevicesController, CommandsController, HealthController, AdminController, AdminNextController, LogsController, PtyController, FileOpsController, RemoteBrowserController],
+  controllers: [DevicesController, CommandsController, HealthController, AdminController, LogsController, PtyController, FileOpsController, RemoteBrowserController, AdminNextController],
   providers: [
     AgentGateway,
     DeviceStore,
     LogStore,
     DatabaseService,
     AdminSessionService,
+    AdminLockoutService,
+    TotpService,
+    AdminAuditService,
     AdminApiTokenService,
     CommandStore,
     CommandDispatchService,

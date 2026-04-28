@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Body, Param, HttpException, HttpStatus, Headers } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, HttpException, HttpStatus, Headers, Sse, MessageEvent } from '@nestjs/common';
 import { DeviceStore } from './device.store';
 import { randomUUID } from 'node:crypto';
+import { Observable, map } from 'rxjs';
 import { getBootstrapToken } from '../config/auth';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { getClientId } from '../rate-limit/client-id';
@@ -35,6 +36,20 @@ export class DevicesController {
       status: d.status,
       os: d.os,
     }));
+  }
+
+  @Sse('devices/stream')
+  streamDevices(
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+  ): Observable<MessageEvent> {
+    requireAdminAuthorized(auth, cookie, this.adminSessions, this.adminApiTokens, ['device:read']);
+    return this.deviceStore.statusChangeStream().pipe(
+      map((change) => ({
+        type: `device-${change.status}`,
+        data: JSON.stringify(change),
+      } as MessageEvent)),
+    );
   }
 
   @Get('devices/:id')
@@ -92,6 +107,45 @@ export class DevicesController {
       ccAgentToken: agentToken,
       deviceName: device.name,
     };
+  }
+
+  @Delete('devices/:id')
+  deleteDevice(
+    @Param('id') id: string,
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Headers('authorization') auth?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    requireAdminMutationAuthorized(
+      auth,
+      cookie,
+      csrfToken,
+      this.adminSessions,
+      this.adminApiTokens,
+      ['device:control'],
+    );
+
+    const removed = this.deviceStore.removeDevice(id);
+    if (!removed) {
+      throw new HttpException('Device not found', HttpStatus.NOT_FOUND);
+    }
+    return { removed: true };
+  }
+
+  @Post('revoke')
+  revokeDevice(
+    @Headers('authorization') auth?: string,
+  ) {
+    if (!auth || !auth.startsWith('Bearer ')) {
+      throw new HttpException('Missing agent authorization header', HttpStatus.UNAUTHORIZED);
+    }
+    const agentToken = auth.slice(7);
+    const device = this.deviceStore.findDeviceByAgentToken(agentToken);
+    if (!device) {
+      throw new HttpException('Device not found', HttpStatus.NOT_FOUND);
+    }
+    this.deviceStore.removeDevice(device.id);
+    return { removed: true };
   }
 
   @Post('devices/:id/request-status-snapshot')

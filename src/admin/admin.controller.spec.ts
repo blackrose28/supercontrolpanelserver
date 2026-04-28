@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { AdminController } from './admin.controller';
+import { initAdminPasswordHash } from '../config/auth';
 
 describe('AdminController admin pages', () => {
   const deviceStore = {
@@ -31,6 +32,25 @@ describe('AdminController admin pages', () => {
     loginWindowMs: vi.fn(() => 60_000),
   } as any;
 
+  const lockoutService = {
+    checkLockout: vi.fn(() => ({ allowed: true, retryAfterMs: 0, failureCount: 0, lockedOut: false })),
+    recordFailure: vi.fn(),
+    resetLockout: vi.fn(),
+  } as any;
+
+  const totpService = {
+    generateSetup: vi.fn(),
+    verifyAndEnable: vi.fn(),
+    verify: vi.fn(),
+    disable: vi.fn(),
+    isEnabled: vi.fn(),
+  } as any;
+
+  const auditService = {
+    log: vi.fn(),
+    list: vi.fn(() => []),
+  } as any;
+
   let controller: AdminController;
 
   beforeEach(() => {
@@ -42,6 +62,9 @@ describe('AdminController admin pages', () => {
       adminSessions,
       adminApiTokens,
       rateLimitService,
+      lockoutService,
+      totpService,
+      auditService,
     );
   });
 
@@ -54,6 +77,14 @@ describe('AdminController admin pages', () => {
       redirect: vi.fn(),
       render: vi.fn(),
       cookie: vi.fn(),
+      clearCookie: vi.fn(),
+    } as any;
+  }
+
+  function createReq() {
+    return {
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' },
     } as any;
   }
 
@@ -61,35 +92,64 @@ describe('AdminController admin pages', () => {
     const res = createRes();
     const csrfCookie = 'cc_admin_csrf=test-token';
     process.env.CC_ADMIN_PASSWORD = 'admin';
+    initAdminPasswordHash();
     adminSessions.createSession = vi.fn(() => 'session-token');
     adminSessions.getTtlMs = vi.fn(() => 60_000);
 
-    controller.login('admin', 'test-token', csrfCookie, res);
+    controller.login('admin', 'test-token', csrfCookie, createReq(), res);
 
     expect(res.redirect).toHaveBeenCalledWith('/');
   });
 
-  it('keeps /admin/devices behavior for unauthorized requests', () => {
-    adminSessions.isValid.mockReturnValue(false);
-    const res = createRes();
+  describe('TOTP endpoints', () => {
+    it('GET /admin/totp/status returns enabled=false when TOTP not set up', () => {
+      totpService.isEnabled.mockReturnValue(false);
+      adminSessions.isValid.mockReturnValue(true);
 
-    controller.html(undefined, undefined, res);
+      const result = controller.getTotpStatus('cc_admin_session=ok');
 
-    expect(res.redirect).toHaveBeenCalledWith('/admin/login');
-    expect(res.render).not.toHaveBeenCalled();
+      expect(result).toEqual({ enabled: false });
+    });
+
+    it('GET /admin/totp/status requires admin session', () => {
+      adminSessions.isValid.mockReturnValue(false);
+
+      expect(() => controller.getTotpStatus(undefined)).toThrow();
+    });
   });
 
-  it('keeps /admin/devices behavior for authorized requests', () => {
-    adminSessions.isValid.mockReturnValue(true);
-    const res = createRes();
+  describe('TOTP login flow', () => {
+    it('returns totp-required when login succeeds and 2FA is enabled', () => {
+      const res = createRes();
+      const csrfCookie = 'cc_admin_csrf=test-token';
+      process.env.CC_ADMIN_PASSWORD = 'admin';
+      initAdminPasswordHash();
+      totpService.isEnabled.mockReturnValue(true);
 
-    controller.html(undefined, 'cc_admin_session=ok', res);
+      controller.login('admin', 'test-token', csrfCookie, createReq(), res);
 
-    expect(res.render).toHaveBeenCalledWith('devices', expect.objectContaining({
-      csrfToken: expect.any(String),
-      adminApiScopes: expect.any(Array),
-      meta: expect.any(String),
-    }));
+      // Should not create a full session yet
+      expect(res.redirect).not.toHaveBeenCalledWith('/');
+      // Should set a temporary cookie and redirect to TOTP page
+      expect(res.cookie).toHaveBeenCalledWith(
+        expect.stringContaining('totp'),
+        expect.any(String),
+        expect.objectContaining({ maxAge: expect.any(Number) }),
+      );
+    });
+
+    it('creates session directly when 2FA is not enabled', () => {
+      const res = createRes();
+      const csrfCookie = 'cc_admin_csrf=test-token';
+      process.env.CC_ADMIN_PASSWORD = 'admin';
+      initAdminPasswordHash();
+      totpService.isEnabled.mockReturnValue(false);
+      adminSessions.createSession = vi.fn(() => 'session-token');
+      adminSessions.getTtlMs = vi.fn(() => 60_000);
+
+      controller.login('admin', 'test-token', csrfCookie, createReq(), res);
+
+      expect(res.redirect).toHaveBeenCalledWith('/');
+    });
   });
-
 });

@@ -11,23 +11,26 @@ import {
   Redirect,
   Post,
   Query,
+  Req,
   Res,
 } from '@nestjs/common';
-import { join } from 'path';
+import { Request, Response } from 'express';
 import { DeviceStore } from '../devices/device.store';
-import { getAdminPassword } from '../config/auth';
-import { Response } from 'express';
+import { verifyAdminPassword } from '../config/auth';
 import {
   ADMIN_CSRF_COOKIE,
   ADMIN_SESSION_COOKIE,
   ensureCsrfToken,
-  hasValidAdminSession,
   parseCookies,
   requireCsrf,
   requireAdminSessionAuthorized,
+  authFailureDelay,
 } from './admin-auth';
 import { AdminSessionService } from './admin-session.service';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
+import { AdminLockoutService } from './admin-lockout.service';
+import { TotpService } from './totp.service';
+import { AdminAuditService, AuditEvents } from './admin-audit.service';
 import { getClientId } from '../rate-limit/client-id';
 import {
   ADMIN_API_TOKEN_SCOPES,
@@ -46,11 +49,20 @@ export class AdminController {
     private readonly adminSessions: AdminSessionService,
     private readonly adminApiTokens: AdminApiTokenService,
     private readonly rateLimitService: RateLimitService,
+    private readonly lockoutService: AdminLockoutService,
+    private readonly totpService: TotpService,
+    private readonly auditService: AdminAuditService,
   ) {}
 
   @Get()
-  @Redirect('/admin/devices')
+  @Redirect('/')
   root() {
+    return;
+  }
+
+  @Get('devices')
+  @Redirect('/')
+  legacyDevices() {
     return;
   }
 
@@ -64,32 +76,20 @@ export class AdminController {
     res!.render('login', { csrfToken, error: error || undefined });
   }
 
-  @Get('assets/xterm.min.js')
-  xtermScript(@Res() res: Response) {
-    return res.sendFile(join(process.cwd(), 'node_modules', '@xterm', 'xterm', 'lib', 'xterm.js'));
-  }
-
-  @Get('assets/xterm.min.css')
-  xtermStyles(@Res() res: Response) {
-    return res.sendFile(join(process.cwd(), 'node_modules', '@xterm', 'xterm', 'css', 'xterm.css'));
-  }
-
-  @Get('assets/chart.min.js')
-  chartScript(@Res() res: Response) {
-    return res.sendFile(join(process.cwd(), 'node_modules', 'chart.js', 'dist', 'chart.umd.js'));
-  }
-
   @Post('login')
   @HttpCode(200)
-  login(
+  async login(
     @Body('password') password: string,
     @Body('csrfToken') csrfToken: string,
     @Headers('cookie') cookie: string | undefined,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
     @Headers('x-forwarded-for') forwardedFor?: string,
     @Headers('x-real-ip') realIp?: string,
+    @Headers('user-agent') userAgent?: string,
   ) {
     const clientId = getClientId(forwardedFor, realIp);
+    const ip = forwardedFor?.split(',')[0]?.trim() || realIp || req.ip || req.socket?.remoteAddress || null;
     this.rateLimitService.check(
       `login:${clientId}`,
       this.rateLimitService.loginLimit(),
@@ -97,12 +97,227 @@ export class AdminController {
     );
     requireCsrf(cookie, csrfToken);
 
-    if (password !== getAdminPassword()) {
+    const lockout = this.lockoutService.checkLockout(clientId);
+    if (!lockout.allowed) {
+      await authFailureDelay();
+      this.auditService.log(AuditEvents.LOGIN_LOCKOUT, ip || clientId, { failureCount: lockout.failureCount });
+      if (lockout.lockedOut) {
+        return res.redirect(
+          `/admin/login?error=Account+locked.+Try+again+in+${Math.ceil(lockout.retryAfterMs / 60000)}+minutes`,
+        );
+      }
+      return res.redirect(`/admin/login?error=Too+many+attempts.+Retry+in+${Math.ceil(lockout.retryAfterMs / 1000)}+seconds`);
+    }
+
+    if (!verifyAdminPassword(password)) {
+      this.lockoutService.recordFailure(clientId);
+      this.auditService.log(AuditEvents.LOGIN_FAILED, ip || clientId, { reason: 'wrong-password' });
+      await authFailureDelay();
       return res.redirect('/admin/login?error=Invalid+password');
     }
 
-    const session = this.adminSessions.createSession();
+    this.lockoutService.resetLockout(clientId);
+
     const secure = process.env.NODE_ENV === 'production';
+
+    if (this.totpService.isEnabled()) {
+      const totpToken = crypto.randomUUID();
+      res.cookie('cc_admin_totp', totpToken, {
+        httpOnly: true,
+        sameSite: 'strict',
+        secure,
+        path: '/',
+        maxAge: 2 * 60 * 1000,
+      });
+      TotpChallenges.set(totpToken, Date.now() + 2 * 60 * 1000);
+      return res.redirect('/admin/login/totp');
+    }
+
+    const session = this.adminSessions.createSession({ ip, userAgent });
+    this.auditService.log(AuditEvents.LOGIN_SUCCESS, ip || clientId, { userAgent });
+    res.cookie(ADMIN_SESSION_COOKIE, session, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure,
+      path: '/',
+      maxAge: this.adminSessions.getTtlMs(),
+    });
+    res.redirect('/');
+  }
+
+  @Get('login/totp')
+  totpLoginPage(
+    @Query('error') error?: string,
+    @Headers('cookie') cookie?: string,
+    @Res() res?: Response,
+  ) {
+    const csrfToken = ensureCsrfToken(res!, cookie);
+    if (!validateTotpChallenge(cookie)) {
+      return res!.redirect('/admin/login?error=TOTP+challenge+expired');
+    }
+    res!.render('login-totp', { csrfToken, error: error || undefined });
+  }
+
+  @Post('login/totp')
+  @HttpCode(200)
+  async loginTotp(
+    @Body('totpCode') totpCode: string,
+    @Body('csrfToken') csrfToken: string,
+    @Headers('cookie') cookie: string | undefined,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Headers('x-forwarded-for') forwardedFor?: string,
+    @Headers('x-real-ip') realIp?: string,
+    @Headers('user-agent') userAgent?: string,
+  ) {
+    const clientId = getClientId(forwardedFor, realIp);
+    const ip = forwardedFor?.split(',')[0]?.trim() || realIp || req.ip || req.socket?.remoteAddress || null;
+    this.rateLimitService.check(
+      `login-totp:${clientId}`,
+      5,
+      60_000,
+    );
+    requireCsrf(cookie, csrfToken);
+
+    if (!validateTotpChallenge(cookie)) {
+      await authFailureDelay();
+      return res.redirect('/admin/login?error=TOTP+challenge+expired');
+    }
+
+    if (!this.totpService.verify(totpCode)) {
+      this.auditService.log(AuditEvents.LOGIN_TOTP_FAILED, ip || clientId);
+      await authFailureDelay();
+      return res.redirect('/admin/login/totp?error=Invalid+TOTP+code');
+    }
+
+    consumeTotpChallenge(cookie);
+    const session = this.adminSessions.createSession({ ip, userAgent });
+    this.auditService.log(AuditEvents.LOGIN_SUCCESS, ip || clientId, { userAgent, method: 'totp' });
+    const secure = process.env.NODE_ENV === 'production';
+    res.clearCookie('cc_admin_totp', { path: '/' });
+    res.cookie(ADMIN_SESSION_COOKIE, session, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure,
+      path: '/',
+      maxAge: this.adminSessions.getTtlMs(),
+    });
+    res.redirect('/');
+  }
+
+  @Get('totp/status')
+  getTotpStatus(@Headers('cookie') cookie?: string) {
+    requireAdminSessionAuthorized(cookie, this.adminSessions);
+    return { enabled: this.totpService.isEnabled() };
+  }
+
+  @Post('totp/setup')
+  async setupTotp(
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Headers('cookie') cookie?: string,
+  ) {
+    requireAdminSessionAuthorized(cookie, this.adminSessions);
+    requireCsrf(cookie, csrfToken);
+    return this.totpService.generateSetup();
+  }
+
+  @Post('totp/verify-setup')
+  verifyTotpSetup(
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Body('totpCode') totpCode: string | undefined,
+    @Headers('cookie') cookie?: string,
+  ) {
+    requireAdminSessionAuthorized(cookie, this.adminSessions);
+    requireCsrf(cookie, csrfToken);
+    if (!totpCode || typeof totpCode !== 'string') {
+      throw new BadRequestException('totpCode is required');
+    }
+    const ok = this.totpService.verifyAndEnable(totpCode);
+    if (!ok) {
+      throw new BadRequestException('Invalid TOTP code');
+    }
+    this.auditService.log(AuditEvents.TOTP_ENABLED, undefined, { fromSetup: true });
+    return { enabled: true };
+  }
+
+  @Post('totp/disable')
+  disableTotp(
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Body('totpCode') totpCode: string | undefined,
+    @Headers('cookie') cookie?: string,
+  ) {
+    requireAdminSessionAuthorized(cookie, this.adminSessions);
+    requireCsrf(cookie, csrfToken);
+    if (!totpCode || typeof totpCode !== 'string') {
+      throw new BadRequestException('totpCode is required');
+    }
+    const ok = this.totpService.disable(totpCode);
+    if (!ok) {
+      throw new BadRequestException('Invalid TOTP code');
+    }
+    this.auditService.log(AuditEvents.TOTP_DISABLED);
+    return { enabled: false };
+  }
+
+  @Get('totp/recovery-codes')
+  getRecoveryCodes(
+    @Headers('cookie') cookie?: string,
+    @Headers('x-forwarded-for') forwardedFor?: string,
+    @Headers('x-real-ip') realIp?: string,
+  ) {
+    requireAdminSessionAuthorized(cookie, this.adminSessions);
+    const clientId = getClientId(forwardedFor, realIp);
+    this.rateLimitService.check(`totp-rc:${clientId}`, 2, 60_000);
+    return { codes: this.totpService.getRecoveryCodes() };
+  }
+
+  @Post('totp/regenerate-recovery-codes')
+  regenerateRecoveryCodes(
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Headers('cookie') cookie?: string,
+    @Headers('x-forwarded-for') forwardedFor?: string,
+    @Headers('x-real-ip') realIp?: string,
+  ) {
+    requireAdminSessionAuthorized(cookie, this.adminSessions);
+    requireCsrf(cookie, csrfToken);
+    const clientId = getClientId(forwardedFor, realIp);
+    this.rateLimitService.check(`totp-rc-gen:${clientId}`, 2, 60_000);
+    this.auditService.log(AuditEvents.TOTP_RECOVERY_REGENERATED);
+    return { codes: this.totpService.regenerateRecoveryCodes() };
+  }
+
+  @Post('login/recovery')
+  @HttpCode(200)
+  async loginRecovery(
+    @Body('recoveryCode') recoveryCode: string,
+    @Body('csrfToken') csrfToken: string,
+    @Headers('cookie') cookie: string | undefined,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Headers('x-forwarded-for') forwardedFor?: string,
+    @Headers('x-real-ip') realIp?: string,
+    @Headers('user-agent') userAgent?: string,
+  ) {
+    const clientId = getClientId(forwardedFor, realIp);
+    const ip = forwardedFor?.split(',')[0]?.trim() || realIp || req.ip || req.socket?.remoteAddress || null;
+    this.rateLimitService.check(`login-recovery:${clientId}`, 5, 60_000);
+    requireCsrf(cookie, csrfToken);
+
+    if (!validateTotpChallenge(cookie)) {
+      await authFailureDelay();
+      return res.redirect('/admin/login?error=Recovery+challenge+expired');
+    }
+
+    if (!this.totpService.verifyRecoveryCode(recoveryCode)) {
+      await authFailureDelay();
+      return res.redirect('/admin/login/totp?error=Invalid+recovery+code');
+    }
+
+    consumeTotpChallenge(cookie);
+    const session = this.adminSessions.createSession({ ip, userAgent });
+    this.auditService.log(AuditEvents.LOGIN_RECOVERY_USED, ip || clientId, { userAgent });
+    const secure = process.env.NODE_ENV === 'production';
+    res.clearCookie('cc_admin_totp', { path: '/' });
     res.cookie(ADMIN_SESSION_COOKIE, session, {
       httpOnly: true,
       sameSite: 'strict',
@@ -125,26 +340,6 @@ export class AdminController {
     this.adminSessions.clear(cookies[ADMIN_SESSION_COOKIE]);
     res?.clearCookie(ADMIN_SESSION_COOKIE, { path: '/' });
     res?.redirect('/admin/login');
-  }
-
-  @Get('devices')
-  html(
-    @Headers('authorization') auth?: string,
-    @Headers('cookie') cookie?: string,
-    @Res() res?: Response,
-  ) {
-    if (!hasValidAdminSession(cookie, this.adminSessions)) {
-      const csrfToken = ensureCsrfToken(res!, cookie);
-      res!.redirect('/admin/login');
-      return;
-    }
-    const csrfToken = ensureCsrfToken(res!, cookie);
-    const meta = this.renderMeta();
-    res!.render('devices', {
-      csrfToken,
-      adminApiScopes: ADMIN_API_TOKEN_SCOPES,
-      meta,
-    });
   }
 
   @Get('api-tokens')
@@ -277,6 +472,8 @@ export class AdminController {
       scopes: scopeList as AdminApiTokenScope[],
     });
 
+    this.auditService.log(AuditEvents.API_TOKEN_CREATED, undefined, { label: token.label, scopes: token.scopes });
+
     return {
       tokenId: token.tokenId,
       token: token.token,
@@ -303,16 +500,97 @@ export class AdminController {
       throw new HttpException('Token not found', HttpStatus.NOT_FOUND);
     }
 
+    this.auditService.log(AuditEvents.API_TOKEN_REVOKED, undefined, { tokenId });
+
     return {
       tokenId: revoked.tokenId,
       revokedAt: revoked.revokedAt ? new Date(revoked.revokedAt).toISOString() : null,
     };
   }
 
-  private renderMeta() {
-    const devices = this.deviceStore.getAllDevices();
-    return `Total devices: ${devices.length} | Connected: ${
-      devices.filter((d) => d.status === 'connected').length
-    } | Last updated: ${new Date().toISOString()}`;
+  @Get('sessions')
+  listSessions(@Headers('cookie') cookie?: string) {
+    requireAdminSessionAuthorized(cookie, this.adminSessions);
+    return this.adminSessions.listSessions().map((s) => ({
+      tokenHash: s.tokenHash,
+      createdAt: s.createdAt.toISOString(),
+      expiresAt: s.expiresAt.toISOString(),
+      ip: s.ip,
+      userAgent: s.userAgent,
+    }));
   }
+
+  @Post('sessions/revoke')
+  revokeSession(
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Body('tokenHash') tokenHash: string | undefined,
+    @Headers('cookie') cookie?: string,
+  ) {
+    requireAdminSessionAuthorized(cookie, this.adminSessions);
+    requireCsrf(cookie, csrfToken);
+    if (!tokenHash || typeof tokenHash !== 'string') {
+      throw new BadRequestException('tokenHash is required');
+    }
+    this.adminSessions.revokeSession(tokenHash);
+    this.auditService.log(AuditEvents.SESSION_REVOKED, undefined, { tokenHash });
+    return { ok: true };
+  }
+
+  @Post('sessions/revoke-all')
+  revokeAllSessions(
+    @Body('csrfToken') csrfToken: string | undefined,
+    @Headers('cookie') cookie?: string,
+  ) {
+    requireAdminSessionAuthorized(cookie, this.adminSessions);
+    requireCsrf(cookie, csrfToken);
+    const cookies = parseCookies(cookie);
+    const currentToken = cookies[ADMIN_SESSION_COOKIE];
+    this.adminSessions.revokeAllExcept(currentToken);
+    this.auditService.log(AuditEvents.SESSIONS_REVOKED_ALL);
+    return { ok: true };
+  }
+
+  @Get('audit-log')
+  getAuditLog(
+    @Query('event') event?: string,
+    @Query('actor') actor?: string,
+    @Query('limit') limit?: string,
+    @Headers('cookie') cookie?: string,
+  ) {
+    requireAdminSessionAuthorized(cookie, this.adminSessions);
+    const parsedLimit = Number(limit);
+    return this.auditService.list({
+      limit: Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 100,
+      event: event as any,
+      actor,
+    }).map((entry) => ({
+      id: entry.id,
+      event: entry.event,
+      actor: entry.actor,
+      details: entry.details,
+      createdAt: entry.createdAt.toISOString(),
+    }));
+  }
+
+}
+
+const TotpChallenges = new Map<string, number>();
+
+function validateTotpChallenge(cookieHeader: string | undefined): boolean {
+  const cookies = parseCookies(cookieHeader);
+  const token = cookies['cc_admin_totp'];
+  if (!token) return false;
+  const expiresAt = TotpChallenges.get(token);
+  if (!expiresAt) return false;
+  if (Date.now() > expiresAt) {
+    TotpChallenges.delete(token);
+    return false;
+  }
+  return true;
+}
+
+function consumeTotpChallenge(cookieHeader: string | undefined): void {
+  const cookies = parseCookies(cookieHeader);
+  const token = cookies['cc_admin_totp'];
+  if (token) TotpChallenges.delete(token);
 }

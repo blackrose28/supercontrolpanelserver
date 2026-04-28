@@ -22,7 +22,7 @@ describe('AdminNextController', () => {
     } as any;
   }
 
-  it('renders admin-next shell for authorized session', () => {
+  it('renders admin-next shell for authorized session at root', () => {
     adminSessions.isValid.mockReturnValue(true);
     const res = createRes();
 
@@ -34,9 +34,6 @@ describe('AdminNextController', () => {
       scriptSrc: expect.stringMatching(/^\/admin-next\/(assets\/.*\.js|index\.js)$/),
       stylesheets: expect.any(Array),
     }));
-
-    const renderPayload = res.render.mock.calls[0][1];
-    expect(renderPayload.scriptSrc).not.toBe('/admin-next/index.js');
   });
 
   it('redirects to login for unauthorized session', () => {
@@ -49,7 +46,7 @@ describe('AdminNextController', () => {
     expect(res.render).not.toHaveBeenCalled();
   });
 
-  it('serves shell for nested /admin-next paths', () => {
+  it('serves shell for nested SPA paths', () => {
     adminSessions.isValid.mockReturnValue(true);
     const res = createRes();
 

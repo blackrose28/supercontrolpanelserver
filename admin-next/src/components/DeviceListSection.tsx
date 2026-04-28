@@ -13,6 +13,7 @@ type DeviceListSectionProps = {
   onRequestRecentLogs: (deviceId: string) => void;
   onRequestRestartOpenvpn: (deviceId: string) => void;
   onRequestRestartBoundaryAuth: (deviceId: string) => void;
+  onDeleteDevice: (deviceId: string) => void;
   deviceActionLoadingId: string | null;
   deviceActionError: string | null;
   expandedDeviceId?: string | null;
@@ -30,6 +31,7 @@ export function DeviceListSection({
   onRequestRecentLogs,
   onRequestRestartOpenvpn,
   onRequestRestartBoundaryAuth,
+  onDeleteDevice,
   deviceActionLoadingId,
   deviceActionError,
   expandedDeviceId,
@@ -81,7 +83,11 @@ export function DeviceListSection({
                 <Fragment key={device.id}>
                   <tr>
                     <td data-label="Name">{device.name}</td>
-                    <td data-label="Status">{device.status}</td>
+                    <td data-label="Status">
+                      <span className={`device-status-badge device-status-${device.status}`}>
+                        {device.status}
+                      </span>
+                    </td>
                     <td data-label="OS">{device.os || '-'}</td>
                     <td data-label="Last Seen">{formatTimestamp(device.lastSeenAt)}</td>
                     <td data-label="Actions">
@@ -158,6 +164,19 @@ export function DeviceListSection({
                               }}
                             >
                               {deviceActionLoadingId === device.id ? 'Requesting…' : 'Restart Boundary Auth'}
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="device-action-delete"
+                              onClick={() => {
+                                setOpenMenuDeviceId(null);
+                                if (confirm(`Delete device "${device.name}" permanently? This cannot be undone.`)) {
+                                  onDeleteDevice(device.id);
+                                }
+                              }}
+                            >
+                              Delete device
                             </button>
                           </div>
                         ) : null}

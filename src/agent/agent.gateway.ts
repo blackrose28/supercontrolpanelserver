@@ -69,6 +69,18 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   handleConnection(client: any, request: any) {
     console.log('Agent connection attempt');
+
+    // Reject browser-originated cross-origin connections to agent WS
+    const origin = request?.headers?.origin;
+    if (origin && !origin.startsWith('http://localhost') && !origin.startsWith('https://localhost')) {
+      const allowed = process.env.CC_CORS_ORIGIN?.split(',').map(s => s.trim());
+      if (allowed && allowed.length > 0 && allowed[0] !== '*') {
+        if (!allowed.some((o) => origin.startsWith(o))) {
+          client.close(1008, 'ORIGIN_REJECTED');
+          return;
+        }
+      }
+    }
     
     // Extract Bearer token from Authorization header
     const authHeader = request.headers['authorization'];

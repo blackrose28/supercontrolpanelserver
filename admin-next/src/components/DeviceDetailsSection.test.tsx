@@ -28,4 +28,50 @@ describe('DeviceDetailsSection', () => {
     expect(screen.getByText('linux')).toBeInTheDocument();
     expect(screen.getByText('2026-04-20 07:00:00 GMT+7')).toBeInTheDocument();
   });
+
+  it('renders connected status with green badge class', () => {
+    render(
+      <DeviceDetailsSection
+        selectedDeviceId="dev-1"
+        selectedDeviceLoading={false}
+        selectedDeviceError={null}
+        selectedDeviceDetails={{
+          id: 'dev-1',
+          name: 'Device One',
+          status: 'connected',
+          os: 'linux',
+          lastSeenAt: null,
+        }}
+      />,
+    );
+
+    const statusElements = screen.getAllByText('connected');
+    const badgeElement = statusElements.find((el) => el.classList.contains('device-status-badge'));
+    expect(badgeElement).toBeDefined();
+    expect(badgeElement).toHaveClass('device-status-connected');
+    expect(badgeElement).toHaveClass('device-status-badge');
+  });
+
+  it('renders disconnected status with red badge class', () => {
+    render(
+      <DeviceDetailsSection
+        selectedDeviceId="dev-2"
+        selectedDeviceLoading={false}
+        selectedDeviceError={null}
+        selectedDeviceDetails={{
+          id: 'dev-2',
+          name: 'Device Two',
+          status: 'disconnected',
+          os: null,
+          lastSeenAt: null,
+        }}
+      />,
+    );
+
+    const statusElements = screen.getAllByText('disconnected');
+    const badgeElement = statusElements.find((el) => el.classList.contains('device-status-badge'));
+    expect(badgeElement).toBeDefined();
+    expect(badgeElement).toHaveClass('device-status-disconnected');
+    expect(badgeElement).toHaveClass('device-status-badge');
+  });
 });

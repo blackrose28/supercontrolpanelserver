@@ -14,6 +14,7 @@ import {
   requestRecentLogs,
   requestRestartOpenvpn,
   requestRestartBoundaryAuth,
+  deleteDevice,
   requestRestartServerTunnel,
   requestAttachServerSshPty,
   requestStartServerSshPty,
@@ -39,6 +40,7 @@ import {
   subscribeTelemetryStream,
   subscribeCommandsStream,
   subscribeTransfersStream,
+  subscribeDevicesStream,
 } from '../api/adminApi';
 import type { DeviceSummary } from '../types/device';
 
@@ -673,6 +675,22 @@ export function useAdminDashboard() {
     }
   }
 
+  async function runDeleteDevice(deviceId: string) {
+    setDeviceActionLoadingId(deviceId);
+    try {
+      await deleteDevice(deviceId);
+      setDeviceActionError(null);
+      refreshDevices();
+      if (selectedDeviceId === deviceId) {
+        selectDevice('');
+      }
+    } catch (err) {
+      setDeviceActionError(err instanceof Error ? err.message : 'Failed to delete device');
+    } finally {
+      setDeviceActionLoadingId(null);
+    }
+  }
+
   async function runRequestRestartServerTunnel(deviceId: string, serverId: string) {
     setDeviceActionLoadingId(deviceId);
 
@@ -748,6 +766,31 @@ export function useAdminDashboard() {
       clearSnapshotRefreshTimers();
     };
   }, []);
+
+  useEffect(() => {
+    const sub = subscribeDevicesStream((event) => {
+      if (!event?.deviceId) {
+        return;
+      }
+      setDevices((current) =>
+        current.map((device) =>
+          device.id === event.deviceId
+            ? { ...device, status: event.status, lastSeenAt: event.lastSeenAt }
+            : device,
+        ),
+      );
+      if (selectedDeviceId === event.deviceId) {
+        setSelectedDeviceDetails((current) =>
+          current
+            ? { ...current, status: event.status, lastSeenAt: event.lastSeenAt }
+            : current,
+        );
+      }
+    });
+    return () => {
+      sub.unsubscribe();
+    };
+  }, [selectedDeviceId]);
 
   useEffect(() => {
     if (!selectedDeviceId) {
@@ -972,6 +1015,9 @@ export function useAdminDashboard() {
     },
     requestRestartBoundaryAuth: (deviceId: string) => {
       void runRequestRestartBoundaryAuth(deviceId);
+    },
+    deleteDevice: (deviceId: string) => {
+      void runDeleteDevice(deviceId);
     },
     requestStartServerTunnel: (deviceId: string, serverId: string) => {
       void runRequestStartServerTunnel(deviceId, serverId);

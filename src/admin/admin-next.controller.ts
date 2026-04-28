@@ -43,7 +43,7 @@ function resolveAssetsFromManifest(): AdminNextAssets {
 
 export { resolveAssetsFromManifest };
 
-@Controller('admin-next')
+@Controller()
 export class AdminNextController {
   private readonly assets: AdminNextAssets;
 

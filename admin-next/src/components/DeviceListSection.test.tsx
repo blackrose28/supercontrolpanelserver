@@ -18,6 +18,7 @@ describe('DeviceListSection', () => {
         onRequestRecentLogs={vi.fn()}
         onRequestRestartOpenvpn={vi.fn()}
         onRequestRestartBoundaryAuth={vi.fn()}
+        onDeleteDevice={vi.fn()}
         deviceActionLoadingId={null}
         deviceActionError={null}
       />,
@@ -49,5 +50,57 @@ describe('DeviceListSection', () => {
     );
 
     expect(screen.getByRole('button', { name: /refreshing devices/i })).toBeDisabled();
+  });
+
+  it('renders connected status with green badge class', () => {
+    render(
+      <DeviceListSection
+        devices={[{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }]}
+        loading={false}
+        error={null}
+        onRefresh={vi.fn()}
+        onSelectDevice={vi.fn()}
+        onViewLogs={vi.fn()}
+        onRequestSnapshot={vi.fn()}
+        onRequestRecentLogs={vi.fn()}
+        onRequestRestartOpenvpn={vi.fn()}
+        onRequestRestartBoundaryAuth={vi.fn()}
+        onDeleteDevice={vi.fn()}
+        deviceActionLoadingId={null}
+        deviceActionError={null}
+      />,
+    );
+
+    const statusElements = screen.getAllByText('connected');
+    const badgeElement = statusElements.find((el) => el.classList.contains('device-status-badge'));
+    expect(badgeElement).toBeDefined();
+    expect(badgeElement).toHaveClass('device-status-connected');
+    expect(badgeElement).toHaveClass('device-status-badge');
+  });
+
+  it('renders disconnected status with red badge class', () => {
+    render(
+      <DeviceListSection
+        devices={[{ id: 'dev-2', name: 'Device Two', status: 'disconnected', os: 'windows', lastSeenAt: null }]}
+        loading={false}
+        error={null}
+        onRefresh={vi.fn()}
+        onSelectDevice={vi.fn()}
+        onViewLogs={vi.fn()}
+        onRequestSnapshot={vi.fn()}
+        onRequestRecentLogs={vi.fn()}
+        onRequestRestartOpenvpn={vi.fn()}
+        onRequestRestartBoundaryAuth={vi.fn()}
+        onDeleteDevice={vi.fn()}
+        deviceActionLoadingId={null}
+        deviceActionError={null}
+      />,
+    );
+
+    const statusElements = screen.getAllByText('disconnected');
+    const badgeElement = statusElements.find((el) => el.classList.contains('device-status-badge'));
+    expect(badgeElement).toBeDefined();
+    expect(badgeElement).toHaveClass('device-status-disconnected');
+    expect(badgeElement).toHaveClass('device-status-badge');
   });
 });

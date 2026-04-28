@@ -6,6 +6,9 @@ import { RecentLogsSection } from '../components/RecentLogsSection';
 import { RuntimeSummarySection } from '../components/RuntimeSummarySection';
 import { TransfersSection } from '../components/TransfersSection';
 import { TelemetrySection } from '../components/TelemetrySection';
+import { TotpSection } from '../components/TotpSection';
+import { SessionSection } from '../components/SessionSection';
+import { AuditLogSection } from '../components/AuditLogSection';
 import { useAdminDashboard } from '../hooks/useAdminDashboard';
 
 type DeviceTabId =
@@ -89,6 +92,7 @@ export function AdminDashboardPage() {
     refreshTunnelLogs,
     requestRestartOpenvpn,
     requestRestartBoundaryAuth,
+    deleteDevice,
     requestStartServerTunnel,
     requestStopServerTunnel,
     startServerSshTerminal,
@@ -306,6 +310,9 @@ export function AdminDashboardPage() {
 
   return (
     <>
+      <TotpSection />
+      <SessionSection />
+      <AuditLogSection />
       <DeviceListSection
         devices={devices}
         loading={loading}
@@ -317,6 +324,7 @@ export function AdminDashboardPage() {
         onRequestRecentLogs={requestRecentLogs}
         onRequestRestartOpenvpn={requestRestartOpenvpn}
         onRequestRestartBoundaryAuth={requestRestartBoundaryAuth}
+        onDeleteDevice={deleteDevice}
         deviceActionLoadingId={deviceActionLoadingId}
         deviceActionError={deviceActionError}
         expandedDeviceId={expandedDeviceId}

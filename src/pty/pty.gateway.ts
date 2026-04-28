@@ -54,6 +54,17 @@ export class PtyGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   handleConnection(client: any, request: any) {
     try {
+      // Reject cross-origin WS connections
+      const origin = request?.headers?.origin;
+      if (origin) {
+        const allowed = process.env.CC_CORS_ORIGIN?.split(',').map(s => s.trim()) || ['http://localhost:3000'];
+        if (allowed.length > 0 && allowed[0] !== '*') {
+          if (!allowed.some((o) => origin.startsWith(o))) {
+            client.close(1008, 'ORIGIN_REJECTED');
+            return;
+          }
+        }
+      }
       client.principal = authenticatePtyPrincipal(
         request?.headers?.authorization,
         request?.headers?.cookie,

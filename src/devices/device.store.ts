@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Observable, Subject } from 'rxjs';
 import { DatabaseService } from '../database/database.service';
 import { normalizeStoredSecret } from '../config/secrets';
 
@@ -18,14 +19,25 @@ export interface Session {
   ws?: any;
 }
 
+export interface DeviceStatusChange {
+  deviceId: string;
+  status: 'connected' | 'disconnected';
+  lastSeenAt: string;
+}
+
 @Injectable()
 export class DeviceStore {
   private devices = new Map<string, Device>();
   private sessions = new Map<string, Session>();
   private deviceToSession = new Map<string, string>();
+  private readonly statusChangeSubject = new Subject<DeviceStatusChange>();
 
   constructor(private readonly databaseService: DatabaseService) {
     this.loadDevicesFromDb();
+  }
+
+  statusChangeStream(): Observable<DeviceStatusChange> {
+    return this.statusChangeSubject.asObservable();
   }
 
   addDevice(device: Device): Device {
@@ -73,9 +85,17 @@ export class DeviceStore {
   updateDeviceStatus(id: string, status: 'connected' | 'disconnected'): void {
     const device = this.devices.get(id);
     if (device) {
+      const previousStatus = device.status;
       device.status = status;
       device.lastSeenAt = new Date().toISOString();
       this.persistDevice(device);
+      if (previousStatus !== status) {
+        this.statusChangeSubject.next({
+          deviceId: id,
+          status,
+          lastSeenAt: device.lastSeenAt,
+        });
+      }
     }
   }
 
@@ -85,6 +105,56 @@ export class DeviceStore {
       device.os = os;
       this.persistDevice(device);
     }
+  }
+
+  removeDevice(id: string): boolean {
+    const device = this.devices.get(id);
+    if (!device) {
+      return false;
+    }
+    const sessionId = this.deviceToSession.get(id);
+    if (sessionId) {
+      const session = this.sessions.get(sessionId);
+      if (session?.ws) {
+        session.ws.close(1000, 'device_removed');
+      }
+      this.sessions.delete(sessionId);
+      this.deviceToSession.delete(id);
+    }
+    this.devices.delete(id);
+    this.statusChangeSubject.next({
+      deviceId: id,
+      status: 'disconnected',
+      lastSeenAt: new Date().toISOString(),
+    });
+    this.databaseService.connection
+      .prepare('DELETE FROM command_audit WHERE commandId IN (SELECT commandId FROM commands WHERE deviceId = ?)')
+      .run(id);
+    this.databaseService.connection
+      .prepare('DELETE FROM commands WHERE deviceId = ?')
+      .run(id);
+    this.databaseService.connection
+      .prepare('DELETE FROM pty_audit WHERE deviceId = ?')
+      .run(id);
+    this.databaseService.connection
+      .prepare('DELETE FROM pty_sessions WHERE deviceId = ?')
+      .run(id);
+    this.databaseService.connection
+      .prepare('DELETE FROM telemetry_logs WHERE deviceId = ?')
+      .run(id);
+    this.databaseService.connection
+      .prepare('DELETE FROM device_runtime_state WHERE deviceId = ?')
+      .run(id);
+    this.databaseService.connection
+      .prepare('DELETE FROM file_transfers WHERE deviceId = ?')
+      .run(id);
+    this.databaseService.connection
+      .prepare('DELETE FROM remote_browser_sessions WHERE deviceId = ?')
+      .run(id);
+    this.databaseService.connection
+      .prepare('DELETE FROM devices WHERE id = ?')
+      .run(id);
+    return true;
   }
 
   addSession(session: Session): void {

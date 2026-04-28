@@ -42,7 +42,11 @@ export function DeviceDetailsSection({
             <h3>Current state</h3>
             <dl className="device-details-list">
               <dt>Status</dt>
-              <dd>{selectedDeviceDetails.status}</dd>
+              <dd>
+                <span className={`device-status-badge device-status-${selectedDeviceDetails.status}`}>
+                  {selectedDeviceDetails.status}
+                </span>
+              </dd>
               <dt>OS</dt>
               <dd>{selectedDeviceDetails.os || '-'}</dd>
             </dl>

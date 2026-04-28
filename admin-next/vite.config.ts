@@ -37,6 +37,11 @@ export default defineConfig({
     manifest: true,
     rollupOptions: {
       input: resolve(__dirname, 'src/main.tsx'),
+      output: {
+        manualChunks: {
+          xterm: ['@xterm/xterm', '@xterm/addon-fit'],
+        },
+      },
     },
   },
   test: {

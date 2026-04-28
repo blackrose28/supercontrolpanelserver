@@ -23,6 +23,7 @@ import {
   subscribeTelemetryStream,
   subscribeCommandsStream,
   subscribeTransfersStream,
+  subscribeDevicesStream,
 } from './adminApi';
 
 describe('adminApi', () => {
@@ -729,5 +730,55 @@ describe('adminApi', () => {
     expect(typeof sub.unsubscribe).toBe('function');
     sub.unsubscribe();
     expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it('subscribeDevicesStream opens stream and dispatches device-connected events', async () => {
+    const listeners = new Map<string, (event: MessageEvent) => void>();
+    const close = vi.fn();
+    const ctor = vi.fn(function(_url: string) {
+      return {
+        addEventListener: (name: string, handler: EventListener) => {
+          listeners.set(name, handler as (event: MessageEvent) => void);
+        },
+        close,
+      };
+    });
+
+    vi.stubGlobal('EventSource', ctor as unknown as typeof EventSource);
+    const onMessage = vi.fn();
+
+    const sub = subscribeDevicesStream(onMessage);
+
+    expect(ctor).toHaveBeenCalledWith('/v1/devices/stream', { withCredentials: true });
+
+    listeners.get('device-connected')?.({ data: JSON.stringify({ deviceId: 'dev-1', status: 'connected', lastSeenAt: '2026-04-28T00:00:00.000Z' }) } as MessageEvent);
+
+    expect(onMessage).toHaveBeenCalledWith({ deviceId: 'dev-1', status: 'connected', lastSeenAt: '2026-04-28T00:00:00.000Z' });
+
+    sub.unsubscribe();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('subscribeDevicesStream dispatches device-disconnected events', async () => {
+    const listeners = new Map<string, (event: MessageEvent) => void>();
+    const close = vi.fn();
+    const ctor = vi.fn(function(_url: string) {
+      return {
+        addEventListener: (name: string, handler: EventListener) => {
+          listeners.set(name, handler as (event: MessageEvent) => void);
+        },
+        close,
+      };
+    });
+
+    vi.stubGlobal('EventSource', ctor as unknown as typeof EventSource);
+    const onMessage = vi.fn();
+
+    const sub = subscribeDevicesStream(onMessage);
+    listeners.get('device-disconnected')?.({ data: JSON.stringify({ deviceId: 'dev-2', status: 'disconnected', lastSeenAt: '2026-04-28T01:00:00.000Z' }) } as MessageEvent);
+
+    expect(onMessage).toHaveBeenCalledWith({ deviceId: 'dev-2', status: 'disconnected', lastSeenAt: '2026-04-28T01:00:00.000Z' });
+
+    sub.unsubscribe();
   });
 });

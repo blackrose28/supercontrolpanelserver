@@ -1,4 +1,5 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { DatabaseService } from '../database/database.service';
 
 type RateLimitBucket = {
   count: number;
@@ -13,6 +14,11 @@ export type RateLimitCheckResult =
 export class RateLimitService {
   private readonly buckets = new Map<string, RateLimitBucket>();
 
+  constructor(private readonly databaseService: DatabaseService) {
+    this.restoreFromDb();
+    this.pruneExpiredDb();
+  }
+
   check(key: string, limit: number, windowMs: number) {
     const result = this.checkDetailed(key, limit, windowMs);
     if (!result.ok) {
@@ -25,10 +31,12 @@ export class RateLimitService {
     const current = this.buckets.get(key);
 
     if (!current || current.resetAt <= now) {
-      this.buckets.set(key, {
+      const bucket: RateLimitBucket = {
         count: 1,
         resetAt: now + windowMs,
-      });
+      };
+      this.buckets.set(key, bucket);
+      this.persistBucket(key, bucket);
       return { ok: true };
     }
 
@@ -41,6 +49,7 @@ export class RateLimitService {
 
     current.count += 1;
     this.buckets.set(key, current);
+    this.persistBucket(key, current);
     return { ok: true };
   }
 
@@ -98,6 +107,33 @@ export class RateLimitService {
 
   transferStartWindowMs() {
     return this.parsePositiveInt(process.env.CC_RATE_LIMIT_TRANSFER_START_WINDOW_MS, 60 * 1000);
+  }
+
+  private persistBucket(key: string, bucket: RateLimitBucket) {
+    this.databaseService.connection
+      .prepare(
+        `INSERT INTO rate_limit_buckets (key, count, resetAt)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET count = excluded.count, resetAt = excluded.resetAt`,
+      )
+      .run(key, bucket.count, bucket.resetAt);
+  }
+
+  private restoreFromDb() {
+    const now = Date.now();
+    const rows = this.databaseService.connection
+      .prepare('SELECT key, count, resetAt FROM rate_limit_buckets WHERE resetAt > ?')
+      .all(now) as Array<{ key: string; count: number; resetAt: number }>;
+
+    for (const row of rows) {
+      this.buckets.set(row.key, { count: row.count, resetAt: row.resetAt });
+    }
+  }
+
+  private pruneExpiredDb() {
+    this.databaseService.connection
+      .prepare('DELETE FROM rate_limit_buckets WHERE resetAt <= ?')
+      .run(Date.now());
   }
 
   private parsePositiveInt(raw: string | undefined, fallback: number): number {

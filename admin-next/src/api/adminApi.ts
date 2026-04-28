@@ -161,7 +161,7 @@ function redirectIfUnauthorized(response: Response): boolean {
   return true;
 }
 
-function getAdminCsrfToken(): string {
+export function getAdminCsrfToken(): string {
   const fromMeta = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')?.trim();
   if (fromMeta) {
     return fromMeta;
@@ -351,6 +351,26 @@ export async function requestRestartOpenvpn(deviceId: string): Promise<DeviceCom
 
 export async function requestRestartBoundaryAuth(deviceId: string): Promise<DeviceCommandResponse> {
   return postDeviceRequest(deviceId, 'request-restart-boundary-auth', 'Failed to request Boundary auth restart');
+}
+
+export async function deleteDevice(deviceId: string): Promise<void> {
+  const csrfToken = getAdminCsrfToken();
+  const response = await fetch(`/v1/devices/${encodeURIComponent(deviceId)}`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ csrfToken }),
+  });
+
+  if (redirectIfUnauthorized(response)) {
+    throw new Error('Redirecting to admin login');
+  }
+
+  if (!response.ok) {
+    throw new Error(await responseErrorMessage(response, 'Failed to delete device'));
+  }
 }
 
 export async function requestRestartServerTunnel(deviceId: string, serverId: string): Promise<DeviceCommandResponse> {
@@ -671,6 +691,39 @@ export function subscribeCommandsStream(deviceId: string, onMessage: () => void)
   return subscribeStream(`/v1/commands/stream?deviceId=${encodeURIComponent(deviceId)}`, 'command', () => onMessage());
 }
 
+export type DeviceStatusChangeEvent = {
+  deviceId: string;
+  status: string;
+  lastSeenAt: string;
+};
+
+export function subscribeDevicesStream(onMessage: (event?: DeviceStatusChangeEvent) => void): StreamSubscription {
+  if (typeof EventSource === 'undefined') {
+    return { unsubscribe: () => {} };
+  }
+
+  const source = new EventSource('/v1/devices/stream', { withCredentials: true });
+
+  const handleEvent = (event: MessageEvent) => {
+    try {
+      onMessage(JSON.parse(event.data) as DeviceStatusChangeEvent);
+    } catch {
+      onMessage(undefined);
+    }
+  };
+
+  if (typeof source.addEventListener === 'function') {
+    source.addEventListener('device-connected', handleEvent as EventListener);
+    source.addEventListener('device-disconnected', handleEvent as EventListener);
+  }
+
+  return {
+    unsubscribe: () => {
+      source.close();
+    },
+  };
+}
+
 export function buildTelemetryExportUrl(deviceId: string, filters: TelemetryFilters = {}): string {
   const params = new URLSearchParams({
     deviceId,
@@ -713,4 +766,183 @@ export async function fetchTelemetry(deviceId: string, filters: TelemetryFilters
   }
 
   return Array.isArray(payload?.events) ? payload.events : [];
+}
+
+// ── TOTP / 2FA ────────────────────────────────────────────────────
+
+export type TotpStatusResponse = { enabled: boolean };
+export type TotpSetupResponse = { secret: string; qrDataUrl: string };
+export type TotpRecoveryCodesResponse = { codes: string[] };
+
+export async function fetchTotpStatus(): Promise<TotpStatusResponse> {
+  const response = await fetch('/admin/totp/status', {
+    credentials: 'same-origin',
+  });
+  if (response.status === 401 || response.status === 403) {
+    redirectIfUnauthorized(response);
+  }
+  return response.json();
+}
+
+export async function setupTotp(): Promise<TotpSetupResponse> {
+  const csrfToken = getAdminCsrfToken();
+  const response = await fetch('/admin/totp/setup', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ csrfToken }),
+  });
+  if (response.status === 401 || response.status === 403) {
+    redirectIfUnauthorized(response);
+  }
+  if (!response.ok) {
+    throw new Error('Failed to start TOTP setup');
+  }
+  return response.json();
+}
+
+export async function verifyTotpSetup(totpCode: string): Promise<{ enabled: boolean }> {
+  const csrfToken = getAdminCsrfToken();
+  const response = await fetch('/admin/totp/verify-setup', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ csrfToken, totpCode }),
+  });
+  if (response.status === 401 || response.status === 403) {
+    redirectIfUnauthorized(response);
+  }
+  if (!response.ok) {
+    const msg = await extractErrorMessage(response);
+    throw new Error(msg || 'Invalid TOTP code');
+  }
+  return response.json();
+}
+
+export async function disableTotp(totpCode: string): Promise<{ enabled: boolean }> {
+  const csrfToken = getAdminCsrfToken();
+  const response = await fetch('/admin/totp/disable', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ csrfToken, totpCode }),
+  });
+  if (response.status === 401 || response.status === 403) {
+    redirectIfUnauthorized(response);
+  }
+  if (!response.ok) {
+    const msg = await extractErrorMessage(response);
+    throw new Error(msg || 'Invalid TOTP code');
+  }
+  return response.json();
+}
+
+export async function fetchRecoveryCodes(): Promise<TotpRecoveryCodesResponse> {
+  const response = await fetch('/admin/totp/recovery-codes', {
+    credentials: 'same-origin',
+  });
+  if (response.status === 401 || response.status === 403) {
+    redirectIfUnauthorized(response);
+  }
+  return response.json();
+}
+
+export async function regenerateRecoveryCodes(): Promise<TotpRecoveryCodesResponse> {
+  const csrfToken = getAdminCsrfToken();
+  const response = await fetch('/admin/totp/regenerate-recovery-codes', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ csrfToken }),
+  });
+  if (response.status === 401 || response.status === 403) {
+    redirectIfUnauthorized(response);
+  }
+  if (!response.ok) {
+    throw new Error('Failed to regenerate recovery codes');
+  }
+  return response.json();
+}
+
+// ── Session Management ─────────────────────────────────────────────
+
+export type SessionEntry = {
+  tokenHash: string;
+  createdAt: string;
+  expiresAt: string;
+  ip: string | null;
+  userAgent: string | null;
+};
+
+export async function fetchSessions(): Promise<SessionEntry[]> {
+  const response = await fetch('/admin/sessions', {
+    credentials: 'same-origin',
+  });
+  if (response.status === 401 || response.status === 403) {
+    redirectIfUnauthorized(response);
+  }
+  return response.json();
+}
+
+export async function revokeSession(tokenHash: string): Promise<{ ok: boolean }> {
+  const csrfToken = getAdminCsrfToken();
+  const response = await fetch('/admin/sessions/revoke', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ csrfToken, tokenHash }),
+  });
+  if (response.status === 401 || response.status === 403) {
+    redirectIfUnauthorized(response);
+  }
+  if (!response.ok) {
+    throw new Error('Failed to revoke session');
+  }
+  return response.json();
+}
+
+export async function revokeAllSessions(): Promise<{ ok: boolean }> {
+  const csrfToken = getAdminCsrfToken();
+  const response = await fetch('/admin/sessions/revoke-all', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ csrfToken }),
+  });
+  if (response.status === 401 || response.status === 403) {
+    redirectIfUnauthorized(response);
+  }
+  if (!response.ok) {
+    throw new Error('Failed to revoke all sessions');
+  }
+  return response.json();
+}
+
+// ── Audit Log ──────────────────────────────────────────────────────
+
+export type AuditEntry = {
+  id: number;
+  event: string;
+  actor: string | null;
+  details: Record<string, unknown> | null;
+  createdAt: string;
+};
+
+export async function fetchAuditLog(params?: {
+  event?: string;
+  actor?: string;
+  limit?: number;
+}): Promise<AuditEntry[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.event) searchParams.set('event', params.event);
+  if (params?.actor) searchParams.set('actor', params.actor);
+  if (params?.limit) searchParams.set('limit', String(params.limit));
+  const qs = searchParams.toString();
+  const response = await fetch(`/admin/audit-log${qs ? '?' + qs : ''}`, {
+    credentials: 'same-origin',
+  });
+  if (response.status === 401 || response.status === 403) {
+    redirectIfUnauthorized(response);
+  }
+  return response.json();
 }
