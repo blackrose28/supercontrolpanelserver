@@ -110,6 +110,25 @@ Or pass secrets inline (useful for CI / containers):
 CC_ADMIN_PASSWORD='…' CC_BOOTSTRAP_TOKEN='…' npm start
 ```
 
+## Deploy to Cloudflare Workers (D1 mode)
+
+For Cloudflare Workers deployment with D1 database:
+
+```bash
+# Deploy to production
+npx wrangler deploy
+
+# Preview locally (with D1)
+npx wrangler dev
+```
+
+**Note for agents:** In Cloudflare Workers D1 mode, agents now prefer WebSockets backed by a per-device Durable Object using WebSocket hibernation:
+1. **GET /agent with WebSocket upgrade**: primary bidirectional agent transport; command dispatch wakes the device Durable Object and sends immediately to connected hibernated sockets.
+2. **POST /agent**: compatibility heartbeat/telemetry polling fallback for older agents.
+3. **GET /agent**: compatibility JSON command polling fallback when no WebSocket upgrade is requested.
+
+The Worker requires the `CC_AGENT_DO` Durable Object binding from `wrangler.toml`; keep the D1 `CC_DB` binding configured as before.
+
 ## Development
 
 ```bash

@@ -68,6 +68,27 @@ describe('adminApi', () => {
     expect(assign).toHaveBeenCalledWith('/admin/login');
   });
 
+  it('fetchDevices redirects to admin login with next parameter from admin-next Pages path', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({}),
+    }));
+    Object.defineProperty(window, 'location', {
+      value: {
+        assign,
+        pathname: '/admin-next/',
+        search: '?device=dev-1',
+        hash: '#logs',
+      },
+      configurable: true,
+    });
+
+    await expect(fetchDevices()).rejects.toThrow('Redirecting to admin login');
+    expect(assign).toHaveBeenCalledWith('/admin/login?next=%2Fadmin-next%2F%3Fdevice%3Ddev-1%23logs');
+  });
+
   it('fetchDeviceDetails uses expected endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

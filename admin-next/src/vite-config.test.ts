@@ -9,3 +9,10 @@ describe('Vite dev proxy', () => {
     expect(source).toMatch(/['"]\/admin['"]:\s*{[\s\S]*?target:\s*['"]http:\/\/localhost:3000['"][\s\S]*?ws:\s*true/s);
   });
 });
+
+  it('documents the Cloudflare Pages build output directory', () => {
+    const wrangler = readFileSync(resolve(__dirname, '../../wrangler.toml'), 'utf8');
+
+    expect(wrangler).toMatch(/pages_build_output_dir\s*=\s*['"]public\/admin-next['"]/);
+  });
+
