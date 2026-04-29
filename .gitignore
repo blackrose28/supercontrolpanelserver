@@ -23,3 +23,6 @@ admin-next/node_modules/
 admin-next/coverage/
 admin-next/dist/
 admin-next/package-lock.json
+
+# Wrangler
+.wrangler

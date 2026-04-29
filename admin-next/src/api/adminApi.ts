@@ -144,12 +144,25 @@ type TransferAction = 'stop' | 'dismiss' | 'force-remove' | 'dismiss-finished';
 
 const ADMIN_LOGIN_PATH = '/admin/login';
 
+function buildAdminLoginPath(): string {
+  if (typeof window === 'undefined') {
+    return ADMIN_LOGIN_PATH;
+  }
+
+  const currentPath = `${window.location.pathname || ''}${window.location.search || ''}${window.location.hash || ''}`;
+  if (!currentPath.startsWith('/admin-next')) {
+    return ADMIN_LOGIN_PATH;
+  }
+
+  return `${ADMIN_LOGIN_PATH}?next=${encodeURIComponent(currentPath)}`;
+}
+
 function redirectToAdminLogin() {
   if (typeof window === 'undefined') {
     return;
   }
 
-  window.location.assign(ADMIN_LOGIN_PATH);
+  window.location.assign(buildAdminLoginPath());
 }
 
 function redirectIfUnauthorized(response: Response): boolean {
