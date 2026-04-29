@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import worker from './index';
+import worker, { AgentConnectionDurableObject } from './index';
 import { D1_SCHEMA_SQL } from './db/d1-schema';
 import { D1CommandStore } from './db/d1-command-store';
 import { D1DeviceStore } from './db/d1-device-store';
@@ -335,6 +335,117 @@ describe('Worker admin PTY WebSocket auth', () => {
 
       expect(serverSocket.send).toHaveBeenCalledWith(expect.stringContaining('PTY_WRITE_RATE_LIMITED'));
       expect(env.CC_AGENT_DO.requests).toHaveLength(20);
+    } finally {
+      vi.stubGlobal('Response', OriginalResponse);
+    }
+  });
+
+  it('closes active PTY sessions and soft-deletes terminal PTY sessions with audit records', async () => {
+    const OriginalResponse = globalThis.Response;
+    class TestUpgradeResponse {
+      readonly status: number;
+      readonly webSocket: unknown;
+      constructor(_body: unknown, init: { status?: number; webSocket?: unknown } = {}) {
+        this.status = init.status ?? 200;
+        this.webSocket = init.webSocket;
+      }
+    }
+    vi.stubGlobal('Response', TestUpgradeResponse as any);
+    const listeners = new Map<string, (event: { data?: unknown }) => unknown>();
+    const clientSocket = { client: true };
+    const serverSocket = {
+      accept: vi.fn(),
+      send: vi.fn(),
+      addEventListener: vi.fn((type: string, listener: (event: { data?: unknown }) => unknown) => listeners.set(type, listener)),
+    };
+    vi.stubGlobal('WebSocketPair', vi.fn(function(this: unknown) { return [clientSocket, serverSocket]; }) as any);
+    const env = await createEnv();
+    env.CC_AGENT_DO = new FakeDurableObjectNamespace();
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({ id: 'row-pty-6', sessionId: 'pty-6', deviceId: 'dev-1', openedAt: '2026-04-29T00:00:00.000Z', attachedActorType: 'admin_env_token', attachedActorId: 'CC_ADMIN_API_TOKEN' });
+    await sessions.markOpen('pty-6', '2026-04-29T00:00:01.000Z');
+    await sessions.createOpening({ id: 'row-pty-7', sessionId: 'pty-7', deviceId: 'dev-1', openedAt: '2026-04-29T00:00:00.000Z' });
+    await sessions.markClosed('pty-7', '2026-04-29T00:00:01.000Z', 'done');
+
+    try {
+      await worker.fetch(wsRequest({ authorization: 'Bearer admin-token' }), env as any);
+      await listeners.get('message')?.({ data: JSON.stringify({ type: 'pty_close', sessionId: 'pty-6' }) });
+      await listeners.get('message')?.({ data: JSON.stringify({ type: 'pty_delete', sessionId: 'pty-7' }) });
+
+      await expect(sessions.get('pty-6')).resolves.toMatchObject({
+        state: 'closing',
+        closeRequestedAt: '2026-04-29T00:00:00.000Z',
+      });
+      await expect(new D1CommandStore(env.CC_DB).getCommand('uuid-2')).resolves.toMatchObject({
+        commandType: 'close_pty',
+        state: 'dispatched',
+        payload: { sessionId: 'pty-6' },
+      });
+      expect(env.CC_AGENT_DO.requests).toHaveLength(1);
+      await expect(env.CC_AGENT_DO.requests[0].request.json()).resolves.toMatchObject({
+        type: 'close_pty',
+        payload: { sessionId: 'pty-6' },
+      });
+      await expect(sessions.get('pty-7')).resolves.toMatchObject({
+        state: 'closed',
+        deletedAt: '2026-04-29T00:00:00.000Z',
+      });
+      await expect(new D1PtyAuditStore(env.CC_DB).listBySession('pty-6')).resolves.toEqual([
+        expect.objectContaining({ eventType: 'pty_close_requested', summary: 'Admin requested PTY close' }),
+      ]);
+      await expect(new D1PtyAuditStore(env.CC_DB).listBySession('pty-7')).resolves.toEqual([
+        expect.objectContaining({ eventType: 'pty_deleted', summary: 'Admin deleted PTY session record' }),
+      ]);
+      expect(serverSocket.send).toHaveBeenCalledWith(expect.stringContaining('pty_close_requested'));
+      expect(serverSocket.send).toHaveBeenCalledWith(expect.stringContaining('pty_deleted'));
+    } finally {
+      vi.stubGlobal('Response', OriginalResponse);
+    }
+  });
+
+  it('fans out agent pty-output messages to attached admin PTY clients', async () => {
+    const OriginalResponse = globalThis.Response;
+    class TestUpgradeResponse {
+      readonly status: number;
+      readonly webSocket: unknown;
+      constructor(_body: unknown, init: { status?: number; webSocket?: unknown } = {}) {
+        this.status = init.status ?? 200;
+        this.webSocket = init.webSocket;
+      }
+    }
+    vi.stubGlobal('Response', TestUpgradeResponse as any);
+    const listeners = new Map<string, (event: { data?: unknown }) => unknown>();
+    const clientSocket = { client: true };
+    const serverSocket = {
+      accept: vi.fn(),
+      send: vi.fn(),
+      addEventListener: vi.fn((type: string, listener: (event: { data?: unknown }) => unknown) => listeners.set(type, listener)),
+    };
+    vi.stubGlobal('WebSocketPair', vi.fn(function(this: unknown) { return [clientSocket, serverSocket]; }) as any);
+    const env = await createEnv();
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({ id: 'row-pty-8', sessionId: 'pty-8', deviceId: 'dev-1', openedAt: '2026-04-29T00:00:00.000Z' });
+    await sessions.markOpen('pty-8', '2026-04-29T00:00:01.000Z');
+
+    try {
+      await worker.fetch(wsRequest({ authorization: 'Bearer admin-token' }), env as any);
+      await listeners.get('message')?.({ data: JSON.stringify({ type: 'pty_attach', sessionId: 'pty-8' }) });
+
+      const agentSocket = { deserializeAttachment: () => ({ deviceId: 'dev-1' }) };
+      const durableObject = new AgentConnectionDurableObject({} as any, env as any);
+      await durableObject.webSocketMessage(agentSocket as any, JSON.stringify({
+        type: 'pty-output',
+        sessionId: 'pty-8',
+        data: 'hello from agent',
+      }));
+
+      expect(serverSocket.send).toHaveBeenCalledWith(JSON.stringify({
+        type: 'pty_output',
+        payload: { sessionId: 'pty-8', deviceId: 'dev-1', data: 'hello from agent' },
+      }));
+      await expect(sessions.get('pty-8')).resolves.toMatchObject({
+        lastOutputAt: '2026-04-29T00:00:00.000Z',
+      });
     } finally {
       vi.stubGlobal('Response', OriginalResponse);
     }

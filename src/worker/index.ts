@@ -3,7 +3,7 @@ import { D1RateLimitStore, D1TotpStore } from './db/d1-rate-totp-store';
 import { D1LogStore, WorkerTelemetryFilter } from './db/d1-log-store';
 import { D1CommandStore } from './db/d1-command-store';
 import { D1PtyAuditStore, D1PtySessionStore } from './db/d1-pty-store';
-import { D1FileTransferStore } from './db/d1-file-op-store';
+import { D1FileTransferStore, D1RemoteBrowserSessionStore } from './db/d1-file-op-store';
 import { D1AdminSessionStore } from './db/d1-admin-session-store';
 import { D1AdminApiTokenStore, WorkerAdminApiTokenScope } from './db/d1-admin-api-token-store';
 
@@ -338,6 +338,73 @@ async function handleAgentSocketMessage(db: any, env: WorkerEnv, deviceId: strin
     return;
   }
 
+  if (type === 'pty-output') {
+    const sessionId = typeof envelope.sessionId === 'string'
+      ? envelope.sessionId
+      : (typeof payload.sessionId === 'string' ? payload.sessionId : '');
+    const data = typeof envelope.data === 'string'
+      ? envelope.data
+      : (typeof payload.data === 'string' ? payload.data : '');
+    if (sessionId) {
+      const ts = typeof envelope.ts === 'string' && envelope.ts.trim() ? envelope.ts : new Date(nowMs(env)).toISOString();
+      await new D1PtySessionStore(db).noteOutput(sessionId, ts);
+      await appendAgentTelemetry(db, env, deviceId, envelope, { type: 'pty-output', sessionId, payload: envelope.payload ?? { data } });
+      fanoutAdminPtyOutput(sessionId, { sessionId, deviceId, data });
+    }
+    sendAgentAck(socket, envelope.seq);
+    return;
+  }
+
+  if (type === 'transfer_progress') {
+    const transferId = typeof payload.transferId === 'string' ? payload.transferId : '';
+    if (transferId) {
+      const ts = typeof envelope.ts === 'string' && envelope.ts.trim() ? envelope.ts : new Date(nowMs(env)).toISOString();
+      await new D1FileTransferStore(db).updateProgress(transferId, ts, {
+        bytesTransferred: typeof payload.bytesTransferred === 'number' ? payload.bytesTransferred : 0,
+        bytesTotal: typeof payload.bytesTotal === 'number' ? payload.bytesTotal : null,
+        percent: typeof payload.percent === 'number' ? payload.percent : null,
+        throughputBps: typeof payload.throughputBps === 'number' ? payload.throughputBps : null,
+        etaSec: typeof payload.etaSec === 'number' ? payload.etaSec : null,
+        phase: typeof payload.phase === 'string' ? payload.phase : null,
+        message: typeof payload.message === 'string' ? payload.message : null,
+        attempt: typeof payload.attempt === 'number' ? payload.attempt : null,
+        maxAttempts: typeof payload.maxAttempts === 'number' ? payload.maxAttempts : null,
+        resumeSupported: typeof payload.resumeSupported === 'boolean' ? payload.resumeSupported : null,
+        retryScheduled: typeof payload.retryScheduled === 'boolean' ? payload.retryScheduled : null,
+        resumeToken: typeof payload.resumeToken === 'string' ? payload.resumeToken : null,
+        resumeOffsetBytes: typeof payload.resumeOffsetBytes === 'number' ? payload.resumeOffsetBytes : null,
+        tempPathHint: typeof payload.tempPathHint === 'string' ? payload.tempPathHint : null,
+      });
+      await appendAgentTelemetry(db, env, deviceId, envelope, { type: 'transfer_progress', payload: envelope.payload ?? null });
+    }
+    sendAgentAck(socket, envelope.seq);
+    return;
+  }
+
+  if (type === 'transfer_status') {
+    const transferId = typeof payload.transferId === 'string' ? payload.transferId : '';
+    const state = typeof payload.state === 'string' ? payload.state : '';
+    if (transferId && ['queued', 'starting', 'running', 'succeeded', 'failed', 'canceled'].includes(state)) {
+      const ts = typeof envelope.ts === 'string' && envelope.ts.trim() ? envelope.ts : new Date(nowMs(env)).toISOString();
+      await new D1FileTransferStore(db).markState(transferId, state as any, ts, {
+        phase: typeof payload.phase === 'string' ? payload.phase : null,
+        reasonCode: typeof payload.reasonCode === 'string' ? payload.reasonCode : null,
+        reasonDetail: typeof payload.reasonDetail === 'string' ? payload.reasonDetail : null,
+        message: typeof payload.message === 'string' ? payload.message : null,
+        attempt: typeof payload.attempt === 'number' ? payload.attempt : null,
+        maxAttempts: typeof payload.maxAttempts === 'number' ? payload.maxAttempts : null,
+        resumeSupported: typeof payload.resumeSupported === 'boolean' ? payload.resumeSupported : null,
+        retryScheduled: typeof payload.retryScheduled === 'boolean' ? payload.retryScheduled : null,
+        resumeToken: typeof payload.resumeToken === 'string' ? payload.resumeToken : null,
+        resumeOffsetBytes: typeof payload.resumeOffsetBytes === 'number' ? payload.resumeOffsetBytes : null,
+        tempPathHint: typeof payload.tempPathHint === 'string' ? payload.tempPathHint : null,
+      });
+      await appendAgentTelemetry(db, env, deviceId, envelope, { type: 'transfer_status', payload: envelope.payload ?? null });
+    }
+    sendAgentAck(socket, envelope.seq);
+    return;
+  }
+
   if (type === 'status_snapshot' || type === 'inventory') {
     await appendAgentTelemetry(db, env, deviceId, envelope, { type, payload: envelope.payload ?? null });
     sendAgentAck(socket, envelope.seq);
@@ -625,6 +692,36 @@ function websocketSend(socket: { send?: (message: string) => void }, type: strin
   socket.send?.(JSON.stringify({ type, payload }));
 }
 
+const adminPtySubscribers = new Map<string, Set<{ send?: (message: string) => void }>>();
+
+function addAdminPtySubscriber(sessionId: string, socket: { send?: (message: string) => void }): void {
+  const subscribers = adminPtySubscribers.get(sessionId) ?? new Set();
+  subscribers.add(socket);
+  adminPtySubscribers.set(sessionId, subscribers);
+}
+
+function removeAdminPtySubscriber(sessionId: string, socket: { send?: (message: string) => void }): void {
+  const subscribers = adminPtySubscribers.get(sessionId);
+  if (!subscribers) return;
+  subscribers.delete(socket);
+  if (!subscribers.size) adminPtySubscribers.delete(sessionId);
+}
+
+function removeAdminPtySocket(socket: { send?: (message: string) => void }): void {
+  for (const [sessionId, subscribers] of adminPtySubscribers.entries()) {
+    subscribers.delete(socket);
+    if (!subscribers.size) adminPtySubscribers.delete(sessionId);
+  }
+}
+
+function fanoutAdminPtyOutput(sessionId: string, payload: { sessionId: string; deviceId: string; data: string }): void {
+  const subscribers = adminPtySubscribers.get(sessionId);
+  if (!subscribers) return;
+  for (const subscriber of subscribers) {
+    websocketSend(subscriber, 'pty_output', payload);
+  }
+}
+
 type AdminPtySocketState = { writeTimestamps: number[] };
 
 async function handleAdminPtyMessage(input: {
@@ -757,6 +854,7 @@ async function handleAdminPtyMessage(input: {
     const actorId = adminActorId(input.principal);
     if (message.type === 'pty_attach') {
       const attached = await sessions.attach(sessionId, actorType, actorId, now);
+      addAdminPtySubscriber(sessionId, input.socket);
       await new D1PtyAuditStore(input.db).append({
         id: makeUuid(input.env),
         sessionId,
@@ -772,6 +870,7 @@ async function handleAdminPtyMessage(input: {
       return;
     }
     const detached = await sessions.detach(sessionId, now);
+    removeAdminPtySubscriber(sessionId, input.socket);
     await new D1PtyAuditStore(input.db).append({
       id: makeUuid(input.env),
       sessionId,
@@ -784,6 +883,79 @@ async function handleAdminPtyMessage(input: {
       details: {},
     });
     websocketSend(input.socket, 'pty_detached', { sessionId, deviceId: detached.deviceId });
+    return;
+  }
+
+  if (message.type === 'pty_close' || message.type === 'pty_delete') {
+    const sessionId = typeof message.sessionId === 'string' ? message.sessionId.trim() : '';
+    if (!sessionId) {
+      websocketSend(input.socket, 'pty_error', { code: 'SESSION_ID_REQUIRED', message: 'sessionId is required' });
+      return;
+    }
+    const sessions = new D1PtySessionStore(input.db);
+    const existing = await sessions.get(sessionId);
+    if (!existing) {
+      websocketSend(input.socket, 'pty_error', { code: 'PTY_SESSION_NOT_FOUND', message: 'PTY session not found' });
+      return;
+    }
+    const now = new Date(nowMs(input.env)).toISOString();
+    const actorType = adminActorType(input.principal);
+    const actorId = adminActorId(input.principal);
+
+    if (message.type === 'pty_delete') {
+      if (!['closed', 'expired', 'failed'].includes(existing.state)) {
+        websocketSend(input.socket, 'pty_error', { code: 'PTY_SESSION_NOT_TERMINAL', message: 'Only terminal PTY sessions can be deleted' });
+        return;
+      }
+      await sessions.deleteTerminalSession(sessionId, now);
+      removeAdminPtySubscriber(sessionId, input.socket);
+      await new D1PtyAuditStore(input.db).append({
+        id: makeUuid(input.env),
+        sessionId,
+        deviceId: existing.deviceId,
+        ts: now,
+        eventType: 'pty_deleted',
+        actorType,
+        actorId,
+        summary: 'Admin deleted PTY session record',
+        details: {},
+      });
+      websocketSend(input.socket, 'pty_deleted', { sessionId, deviceId: existing.deviceId });
+      return;
+    }
+
+    if (!['opening', 'open'].includes(existing.state)) {
+      websocketSend(input.socket, 'pty_error', { code: 'PTY_SESSION_NOT_ACTIVE', message: 'Only active PTY sessions can be closed' });
+      return;
+    }
+    const closing = await sessions.markClosing(sessionId, now);
+    removeAdminPtySubscriber(sessionId, input.socket);
+    const commands = new D1CommandStore(input.db);
+    let command = await commands.createQueuedCommand({
+      id: makeUuid(input.env),
+      commandId: makeUuid(input.env),
+      deviceId: closing.deviceId,
+      commandType: 'close_pty',
+      actorType,
+      actorId,
+      payload: { sessionId },
+      payloadSummary: `Close PTY ${sessionId}`,
+      submittedAt: now,
+    });
+    command = await commands.markDispatched(command.commandId, 1, now);
+    await notifyAgentDurableObject(input.env, closing.deviceId, publicCommand(command), now);
+    await new D1PtyAuditStore(input.db).append({
+      id: makeUuid(input.env),
+      sessionId,
+      deviceId: closing.deviceId,
+      ts: now,
+      eventType: 'pty_close_requested',
+      actorType,
+      actorId,
+      summary: 'Admin requested PTY close',
+      details: {},
+    });
+    websocketSend(input.socket, 'pty_close_requested', { sessionId, deviceId: closing.deviceId });
     return;
   }
 
@@ -890,6 +1062,8 @@ async function handleAdminPtyUpgrade(request: Request, env: WorkerEnv): Promise<
       websocketSend(server, 'pty_error', { code: 'INTERNAL_ERROR', message: String(err) });
     });
   });
+  server.addEventListener?.('close', () => removeAdminPtySocket(server));
+  server.addEventListener?.('error', () => removeAdminPtySocket(server));
   const wsHeaders = applySecurityHeaders(new Headers());
   return new Response(null, { status: 101, headers: wsHeaders, webSocket: client } as ResponseInit & { webSocket: WebSocket });
 }
@@ -1214,7 +1388,7 @@ function isFinishedTransferState(state: string): boolean {
   return state === 'succeeded' || state === 'failed' || state === 'canceled';
 }
 
-async function requireAdminDeviceFromBody(request: Request, env: WorkerEnv, requiredScopes: WorkerAdminApiTokenScope[] = []): Promise<{ db: any; deviceId: string; body: Record<string, unknown> } | Response> {
+async function requireAdminDeviceFromBody(request: Request, env: WorkerEnv, requiredScopes: WorkerAdminApiTokenScope[] = []): Promise<{ db: any; deviceId: string; body: Record<string, unknown>; principal: AdminPrincipal } | Response> {
   const auth = await requireAdminAuth(request, env, requiredScopes);
   if (auth instanceof Response) return auth;
   const body = await parseJsonBody(request);
@@ -1225,7 +1399,7 @@ async function requireAdminDeviceFromBody(request: Request, env: WorkerEnv, requ
   const db = auth.db;
   const device = await new D1DeviceStore(db).getDevice(deviceId);
   if (!device) return jsonResponse({ error: 'Device not found' }, { status: 404 });
-  return { db, deviceId, body };
+  return { db, deviceId, body, principal: auth.principal };
 }
 
 async function handleListFileTransfers(request: Request, env: WorkerEnv, url: URL): Promise<Response> {
@@ -1235,7 +1409,7 @@ async function handleListFileTransfers(request: Request, env: WorkerEnv, url: UR
   return jsonResponse({ items: await new D1FileTransferStore(required.db).listByDevice(required.deviceId, limit) });
 }
 
-async function requireTransferFromBody(request: Request, env: WorkerEnv): Promise<{ store: D1FileTransferStore; deviceId: string; transferId: string; transfer: Awaited<ReturnType<D1FileTransferStore['get']>> } | Response> {
+async function requireTransferFromBody(request: Request, env: WorkerEnv): Promise<{ db: any; store: D1FileTransferStore; deviceId: string; transferId: string; transfer: Awaited<ReturnType<D1FileTransferStore['get']>>; principal: AdminPrincipal } | Response> {
   const required = await requireAdminDeviceFromBody(request, env);
   if (required instanceof Response) return required;
   const transferId = typeof required.body.transferId === 'string' ? required.body.transferId.trim() : '';
@@ -1243,7 +1417,7 @@ async function requireTransferFromBody(request: Request, env: WorkerEnv): Promis
   const store = new D1FileTransferStore(required.db);
   const transfer = await store.get(transferId);
   if (!transfer || transfer.deviceId !== required.deviceId) return jsonResponse({ error: 'Transfer not found' }, { status: 404 });
-  return { store, deviceId: required.deviceId, transferId, transfer };
+  return { db: required.db, store, deviceId: required.deviceId, transferId, transfer, principal: required.principal };
 }
 
 async function handleDismissFileTransfer(request: Request, env: WorkerEnv): Promise<Response> {
@@ -1263,11 +1437,178 @@ async function handleForceRemoveFileTransfer(request: Request, env: WorkerEnv): 
   return jsonResponse({ ok: true, transferId: required.transferId, forced: !isFinishedTransferState(required.transfer!.state) });
 }
 
+async function handleStopFileTransfer(request: Request, env: WorkerEnv): Promise<Response> {
+  const required = await requireTransferFromBody(request, env);
+  if (required instanceof Response) return required;
+  if (isFinishedTransferState(required.transfer!.state)) {
+    return jsonResponse({ code: 'transfer_already_finished', message: 'Transfer is already finished' }, { status: 409 });
+  }
+  const now = new Date(nowMs(env)).toISOString();
+  const actorType = adminActorType(required.principal);
+  const actorId = adminActorId(required.principal);
+  const commands = new D1CommandStore(required.db);
+  let command = await commands.createQueuedCommand({
+    id: makeUuid(env),
+    commandId: makeUuid(env),
+    deviceId: required.deviceId,
+    commandType: 'stop_file_transfer',
+    actorType,
+    actorId,
+    payload: { transferId: required.transferId },
+    payloadSummary: `Stop file transfer ${required.transferId}`,
+    submittedAt: now,
+  });
+  command = await commands.markDispatched(command.commandId, 1, now);
+  const transfer = await required.store.markState(required.transferId, 'canceled', now, { message: 'Stop requested by admin' });
+  await notifyAgentDurableObject(env, required.deviceId, publicCommand(command), now);
+  return jsonResponse({ ok: true, transferId: required.transferId, state: transfer.state, command });
+}
+
 async function handleDismissFinishedFileTransfers(request: Request, env: WorkerEnv): Promise<Response> {
   const required = await requireAdminDeviceFromBody(request, env);
   if (required instanceof Response) return required;
   const result = await new D1FileTransferStore(required.db).deleteFinishedByDevice(required.deviceId);
   return jsonResponse({ ok: true, deletedCount: result.deletedCount });
+}
+
+async function handleOpenRemoteBrowser(request: Request, env: WorkerEnv): Promise<Response> {
+  const required = await requireAdminDeviceFromBody(request, env);
+  if (required instanceof Response) return required;
+  const serverId = typeof required.body.serverId === 'string' ? required.body.serverId.trim() : '';
+  if (!serverId) return jsonResponse({ error: 'serverId is required' }, { status: 400 });
+  const rootPath = typeof required.body.rootPath === 'string' && required.body.rootPath.trim() ? required.body.rootPath.trim() : null;
+  const now = new Date(nowMs(env)).toISOString();
+  const actorType = adminActorType(required.principal);
+  const actorId = adminActorId(required.principal);
+  const browserId = typeof required.body.browserId === 'string' && required.body.browserId.trim() ? required.body.browserId.trim() : makeUuid(env);
+  const browser = await new D1RemoteBrowserSessionStore(required.db).createOpening({
+    id: makeUuid(env),
+    browserSessionId: browserId,
+    deviceId: required.deviceId,
+    serverId,
+    actorType,
+    actorId,
+    openedAt: now,
+    rootPath,
+  });
+  const commandId = makeUuid(env);
+  const commands = new D1CommandStore(required.db);
+  let command = await commands.createQueuedCommand({
+    id: makeUuid(env),
+    commandId,
+    deviceId: required.deviceId,
+    commandType: 'open_remote_browser',
+    actorType,
+    actorId,
+    payload: { browserId, serverId, rootPath },
+    payloadSummary: `Open remote browser ${browserId}`,
+    submittedAt: now,
+  });
+  command = await commands.markDispatched(commandId, 1, now);
+  await notifyAgentDurableObject(env, required.deviceId, publicCommand(command), now);
+  return jsonResponse({
+    browserId: browser.browserSessionId,
+    deviceId: browser.deviceId,
+    serverId: browser.serverId,
+    state: browser.state,
+    rootPath: browser.rootPath,
+    command,
+  });
+}
+
+const remoteBrowserCommandByPath: Record<string, { commandType: string; requiresPath: boolean; closes?: boolean; updatesCurrentPath?: boolean }> = {
+  '/v1/file-ops/remote-browser/list': { commandType: 'list_remote_browser_children', requiresPath: true, updatesCurrentPath: true },
+  '/v1/file-ops/remote-browser/stat': { commandType: 'stat_remote_browser_path', requiresPath: true },
+  '/v1/file-ops/remote-browser/mkdir': { commandType: 'create_remote_browser_directory', requiresPath: true },
+  '/v1/file-ops/remote-browser/delete': { commandType: 'delete_remote_browser_path', requiresPath: true },
+  '/v1/file-ops/remote-browser/close': { commandType: 'close_remote_browser', requiresPath: false, closes: true },
+};
+
+async function handleRemoteBrowserCommand(request: Request, env: WorkerEnv, routePath: string): Promise<Response> {
+  const config = remoteBrowserCommandByPath[routePath];
+  const required = await requireAdminDeviceFromBody(request, env);
+  if (required instanceof Response) return required;
+  const browserId = typeof required.body.browserId === 'string' ? required.body.browserId.trim() : '';
+  if (!browserId) return jsonResponse({ error: 'browserId is required' }, { status: 400 });
+  const path = typeof required.body.path === 'string' && required.body.path.trim() ? required.body.path.trim() : '';
+  if (config.requiresPath && !path) return jsonResponse({ error: 'path is required' }, { status: 400 });
+  const store = new D1RemoteBrowserSessionStore(required.db);
+  const existing = await store.get(browserId);
+  if (!existing || existing.deviceId !== required.deviceId) return jsonResponse({ error: 'Remote browser session not found' }, { status: 404 });
+  if (!['opening', 'open'].includes(existing.state)) return jsonResponse({ error: 'Remote browser session is not active' }, { status: 409 });
+  const now = new Date(nowMs(env)).toISOString();
+  const actorType = adminActorType(required.principal);
+  const actorId = adminActorId(required.principal);
+  const payload: Record<string, unknown> = { browserId };
+  if (path) payload.path = path;
+  if (routePath.endsWith('/delete')) payload.recursive = Boolean(required.body.recursive);
+  const commands = new D1CommandStore(required.db);
+  let command = await commands.createQueuedCommand({
+    id: makeUuid(env),
+    commandId: makeUuid(env),
+    deviceId: required.deviceId,
+    commandType: config.commandType,
+    actorType,
+    actorId,
+    payload,
+    payloadSummary: `${config.commandType} ${browserId}`,
+    submittedAt: now,
+  });
+  command = await commands.markDispatched(command.commandId, 1, now);
+  await notifyAgentDurableObject(env, required.deviceId, publicCommand(command), now);
+  const browser = config.closes
+    ? await store.markClosed(browserId, now, 'Admin closed remote browser session')
+    : config.updatesCurrentPath
+      ? await store.noteActivity(browserId, now, path)
+      : await store.noteActivity(browserId, now);
+  return jsonResponse({ ok: true, browserId, state: browser.state, command });
+}
+
+async function handleStartScpTransfer(request: Request, env: WorkerEnv, direction: 'upload' | 'download'): Promise<Response> {
+  const required = await requireAdminDeviceFromBody(request, env);
+  if (required instanceof Response) return required;
+  const serverId = typeof required.body.serverId === 'string' ? required.body.serverId.trim() : '';
+  const localPath = typeof required.body.localPath === 'string' ? required.body.localPath.trim() : '';
+  const remotePath = typeof required.body.remotePath === 'string' ? required.body.remotePath.trim() : '';
+  if (!serverId) return jsonResponse({ error: 'serverId is required' }, { status: 400 });
+  if (!localPath) return jsonResponse({ error: 'localPath is required' }, { status: 400 });
+  if (!remotePath) return jsonResponse({ error: 'remotePath is required' }, { status: 400 });
+  const now = new Date(nowMs(env)).toISOString();
+  const actorType = adminActorType(required.principal);
+  const actorId = adminActorId(required.principal);
+  const transferId = typeof required.body.transferId === 'string' && required.body.transferId.trim() ? required.body.transferId.trim() : makeUuid(env);
+  const transfer = await new D1FileTransferStore(required.db).create({
+    id: makeUuid(env),
+    transferId,
+    deviceId: required.deviceId,
+    serverId,
+    direction,
+    actorType,
+    actorId,
+    localPath,
+    remotePath,
+    recursive: Boolean(required.body.recursive),
+    ts: now,
+  });
+  const commandId = makeUuid(env);
+  const commandType = direction === 'upload' ? 'start_scp_upload' : 'start_scp_download';
+  const payload = { transferId, serverId, localPath, remotePath, recursive: Boolean(required.body.recursive) };
+  const commands = new D1CommandStore(required.db);
+  let command = await commands.createQueuedCommand({
+    id: commandId,
+    commandId,
+    deviceId: required.deviceId,
+    commandType,
+    actorType,
+    actorId,
+    payload,
+    payloadSummary: `${commandType} ${transferId}`,
+    submittedAt: now,
+  });
+  command = await commands.markDispatched(commandId, 1, now);
+  const updated = await new D1FileTransferStore(required.db).attachCommand(transferId, commandId, 1, now);
+  await notifyAgentDurableObject(env, required.deviceId, publicCommand(command), now);
+  return jsonResponse(updated ?? transfer);
 }
 
 async function handleListLogs(request: Request, env: WorkerEnv, url: URL): Promise<Response> {
@@ -1595,11 +1936,26 @@ async function fetch(request: Request, env: WorkerEnv = {}, _ctx?: WorkerExecuti
   if (request.method === 'POST' && url.pathname === '/v1/file-transfers/dismiss') {
     return handleDismissFileTransfer(request, env);
   }
+  if (request.method === 'POST' && url.pathname === '/v1/file-transfers/stop') {
+    return handleStopFileTransfer(request, env);
+  }
   if (request.method === 'POST' && url.pathname === '/v1/file-transfers/force-remove') {
     return handleForceRemoveFileTransfer(request, env);
   }
   if (request.method === 'POST' && url.pathname === '/v1/file-transfers/dismiss-finished') {
     return handleDismissFinishedFileTransfers(request, env);
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/file-ops/remote-browser/open') {
+    return handleOpenRemoteBrowser(request, env);
+  }
+  if (request.method === 'POST' && remoteBrowserCommandByPath[url.pathname]) {
+    return handleRemoteBrowserCommand(request, env, url.pathname);
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/file-transfers/upload') {
+    return handleStartScpTransfer(request, env, 'upload');
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/file-transfers/download') {
+    return handleStartScpTransfer(request, env, 'download');
   }
 
   if (request.method === 'GET' && url.pathname === '/v1/commands') {
