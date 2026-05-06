@@ -1,11 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import Database from 'better-sqlite3';
+import Database = require('better-sqlite3');
 import fs from 'node:fs';
 import path from 'node:path';
 
 @Injectable()
 export class DatabaseService {
-  private readonly db: Database;
+  private readonly db: Database.Database;
 
   constructor() {
     const configuredPath = process.env.CC_DB_PATH?.trim();
@@ -20,7 +20,7 @@ export class DatabaseService {
     this.initialize();
   }
 
-  get connection(): Database {
+  get connection(): Database.Database {
     return this.db;
   }
 

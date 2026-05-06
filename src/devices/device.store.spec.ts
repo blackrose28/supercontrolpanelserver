@@ -6,6 +6,7 @@ import { DatabaseService } from '../database/database.service';
 import { DeviceStore } from './device.store';
 
 const createdPaths: string[] = [];
+const createdDatabases: DatabaseService[] = [];
 
 function createStore() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-server-device-store-'));
@@ -13,12 +14,16 @@ function createStore() {
   createdPaths.push(tempDir);
   process.env.CC_DB_PATH = dbPath;
   const database = new DatabaseService();
+  createdDatabases.push(database);
   const store = new DeviceStore(database);
   return { database, store };
 }
 
 afterEach(() => {
   delete process.env.CC_DB_PATH;
+  while (createdDatabases.length) {
+    createdDatabases.pop()?.connection.close();
+  }
   while (createdPaths.length) {
     const target = createdPaths.pop();
     if (target) {

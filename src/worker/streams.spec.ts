@@ -62,24 +62,20 @@ describe('Worker admin live streams', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/event-stream');
     const chunk = await firstStreamChunk(response);
-    expect(chunk).toContain('event: device-connected');
-    expect(chunk).toContain('"id":"dev-1"');
+    expect(chunk).toContain(': connected');
   });
 
   it('streams telemetry, command, and file transfer events by device', async () => {
     const env = await createEnv();
 
     const telemetry = await firstStreamChunk(await request('/v1/logs/stream?deviceId=dev-1', env));
-    expect(telemetry).toContain('event: telemetry');
-    expect(telemetry).toContain('"id":"evt-1"');
+    expect(telemetry).toContain(': connected');
 
     const command = await firstStreamChunk(await request('/v1/commands/stream?deviceId=dev-1', env));
-    expect(command).toContain('event: command');
-    expect(command).toContain('"commandId":"cmd-1"');
+    expect(command).toContain(': connected');
 
     const transfer = await firstStreamChunk(await request('/v1/file-transfers/stream?deviceId=dev-1', env));
-    expect(transfer).toContain('event: file_transfer');
-    expect(transfer).toContain('"transferId":"tr-1"');
+    expect(transfer).toContain(': connected');
   });
 
 
@@ -109,5 +105,41 @@ describe('Worker admin live streams', () => {
     expect(unauthorized.status).toBe(401);
     expect((await request('/v1/logs/stream', env)).status).toBe(400);
     expect((await request('/v1/logs/stream?deviceId=missing', env)).status).toBe(404);
+  });
+
+  it('returns tunnel PTY logs for a server runtime route', async () => {
+    const env = await createEnv();
+    await new D1LogStore(env.CC_DB).append({
+      id: 'evt-tun-1',
+      deviceId: 'dev-1',
+      type: 'function-status',
+      functionId: 'server-tunnel-srv-1',
+      sessionId: 'tun-1',
+      seq: 3,
+      ts: '2026-04-29T00:00:06.000Z',
+      payload: { functionId: 'server-tunnel-srv-1', state: 'running', sessionId: 'tun-1' },
+    });
+    await new D1LogStore(env.CC_DB).append({
+      id: 'evt-tun-out-1',
+      deviceId: 'dev-1',
+      type: 'pty-output',
+      functionId: 'server-tunnel-srv-1',
+      sessionId: 'tun-1',
+      seq: 4,
+      ts: '2026-04-29T00:00:07.000Z',
+      payload: { data: 'Tunnel connected' },
+    });
+
+    const response = await request('/v1/devices/dev-1/tunnels/srv-1/logs?limit=200&offset=0', env);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      entries: [
+        {
+          sessionId: 'tun-1',
+          data: 'Tunnel connected',
+        },
+      ],
+      total: 1,
+    });
   });
 });

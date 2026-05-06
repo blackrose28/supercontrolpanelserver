@@ -183,4 +183,60 @@ describe('SshTerminalPanel', () => {
 
     expect(socket.sent.map((entry) => JSON.parse(entry).type)).toEqual(['pty_attach', 'pty_resize']);
   });
+
+  it('stops forwarding input after the PTY is reported missing', async () => {
+    vi.stubGlobal('WebSocket', MockWebSocket as any);
+    Object.defineProperty(window, 'location', {
+      value: { protocol: 'http:', host: 'localhost:3000' },
+      configurable: true,
+    });
+
+    render(<SshTerminalPanel terminal={{ deviceId: 'dev-1', serverId: 'srv-1', sessionId: 'stale-session-1' }} />);
+
+    const socket = MockWebSocket.instances[0];
+    socket.emit('open');
+    socket.emit('message', {
+      data: JSON.stringify({
+        type: 'pty_error',
+        payload: { sessionId: 'stale-session-1', code: 'PTY_NOT_FOUND', message: 'PTY session not found' },
+      }),
+    });
+
+    await waitFor(() => expect(screen.getByText('closed')).toBeInTheDocument());
+    terminalDataHandlers[0]('uptime\r');
+
+    expect(socket.sent.map((entry) => JSON.parse(entry).type)).toEqual(['pty_attach', 'pty_resize']);
+  });
+
+  it('notifies the parent when the PTY is reported missing so stale terminals can be pruned', async () => {
+    vi.stubGlobal('WebSocket', MockWebSocket as any);
+    Object.defineProperty(window, 'location', {
+      value: { protocol: 'http:', host: 'localhost:3000' },
+      configurable: true,
+    });
+    const onTerminalClosed = vi.fn();
+
+    render(
+      <SshTerminalPanel
+        terminal={{ deviceId: 'dev-1', serverId: 'srv-1', sessionId: 'stale-session-1' }}
+        onTerminalClosed={onTerminalClosed}
+      />,
+    );
+
+    const socket = MockWebSocket.instances[0];
+    socket.emit('open');
+    socket.emit('message', {
+      data: JSON.stringify({
+        type: 'pty_error',
+        payload: { sessionId: 'stale-session-1', code: 'PTY_SESSION_NOT_ACTIVE', message: 'PTY session is not active' },
+      }),
+    });
+
+    await waitFor(() => expect(onTerminalClosed).toHaveBeenCalledWith({
+      deviceId: 'dev-1',
+      serverId: 'srv-1',
+      sessionId: 'stale-session-1',
+      reasonCode: 'PTY_SESSION_NOT_ACTIVE',
+    }));
+  });
 });

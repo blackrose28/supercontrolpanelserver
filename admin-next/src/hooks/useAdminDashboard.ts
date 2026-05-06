@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   buildTelemetryExportUrl,
   fetchCommandAudit,
@@ -16,7 +16,6 @@ import {
   requestRestartBoundaryAuth,
   deleteDevice,
   requestRestartServerTunnel,
-  requestAttachServerSshPty,
   requestStartServerSshPty,
   requestStartServerTunnel,
   requestStopServerTunnel,
@@ -79,17 +78,37 @@ function serverIdFromSshSessionId(sessionId: string): string | null {
 }
 
 function activeSshTerminalsFromPtySessions(deviceId: string, sessions: PtySessionEntry[]): ActiveSshTerminal[] {
-  return sessions.flatMap((session) => {
+  const byServerId = new Map<string, { terminal: ActiveSshTerminal; state: string; openedAtMs: number }>();
+
+  for (const session of sessions) {
     const sessionId = typeof session.sessionId === 'string' ? session.sessionId.trim() : '';
     const state = typeof session.state === 'string' ? session.state.trim().toLowerCase() : '';
-    const serverId = serverIdFromSshSessionId(sessionId);
+    const serverId =
+      typeof session.serverId === 'string' && session.serverId.trim()
+        ? session.serverId.trim()
+        : serverIdFromSshSessionId(sessionId);
 
     if (!serverId || !['opening', 'open'].includes(state)) {
-      return [];
+      continue;
     }
 
-    return [{ deviceId, serverId, sessionId }];
-  });
+    const openedAtMs = typeof session.openedAt === 'string' ? Date.parse(session.openedAt) : 0;
+    const candidate = {
+      terminal: { deviceId, serverId, sessionId },
+      state,
+      openedAtMs: Number.isFinite(openedAtMs) ? openedAtMs : 0,
+    };
+    const current = byServerId.get(serverId);
+    if (
+      !current
+      || (candidate.state === 'open' && current.state !== 'open')
+      || (candidate.state === current.state && candidate.openedAtMs > current.openedAtMs)
+    ) {
+      byServerId.set(serverId, candidate);
+    }
+  }
+
+  return Array.from(byServerId.values()).map((entry) => entry.terminal);
 }
 
 function runtimeSummaryHasActiveSsh(summary: RuntimeSummary): boolean {
@@ -99,17 +118,8 @@ function runtimeSummaryHasActiveSsh(summary: RuntimeSummary): boolean {
   });
 }
 
-function activeSshSessionsFromRuntimeSummary(summary: RuntimeSummary): Array<{ serverId: string; localSessionId: string }> {
-  return Object.entries(summary.functions ?? {}).flatMap(([functionId, status]) => {
-    const state = typeof status?.state === 'string' ? status.state.trim().toLowerCase() : '';
-    const localSessionId = typeof status?.sessionId === 'string' ? status.sessionId.trim() : '';
-    if (!functionId.startsWith('server-ssh-') || !['starting', 'running'].includes(state) || !localSessionId) {
-      return [];
-    }
-
-    const serverId = functionId.slice('server-ssh-'.length).trim();
-    return serverId ? [{ serverId, localSessionId }] : [];
-  });
+function runtimeSummaryHasServers(summary: RuntimeSummary): boolean {
+  return Array.isArray(summary.inventory?.servers) && summary.inventory.servers.length > 0;
 }
 
 export function useAdminDashboard() {
@@ -170,6 +180,14 @@ export function useAdminDashboard() {
 
   const [deviceActionError, setDeviceActionError] = useState<string | null>(null);
 
+  const removeSshTerminal = useCallback((terminal: { deviceId: string; serverId: string; sessionId: string }) => {
+    setActiveSshTerminals((previous) => previous.filter((entry) => !(
+      entry.deviceId === terminal.deviceId
+      && entry.serverId === terminal.serverId
+      && entry.sessionId === terminal.sessionId
+    )));
+  }, []);
+
   async function loadActiveSshTerminalsOnly(deviceId: string, requestId?: number, summary?: RuntimeSummary) {
     try {
       const sessions = await fetchPtySessions(deviceId);
@@ -178,30 +196,11 @@ export function useAdminDashboard() {
       }
 
       const hydratedTerminals = activeSshTerminalsFromPtySessions(deviceId, sessions);
-      const hydratedServerIds = new Set(hydratedTerminals.map((terminal) => terminal.serverId));
-      const adoptedTerminals: ActiveSshTerminal[] = [];
-      for (const activeSsh of summary ? activeSshSessionsFromRuntimeSummary(summary) : []) {
-        if (hydratedServerIds.has(activeSsh.serverId)) {
-          continue;
-        }
-
-        try {
-          const response = await requestAttachServerSshPty(deviceId, activeSsh.serverId, activeSsh.localSessionId);
-          const sessionId = typeof response.sessionId === 'string' ? response.sessionId.trim() : '';
-          if (sessionId) {
-            adoptedTerminals.push({ deviceId, serverId: activeSsh.serverId, sessionId });
-            hydratedServerIds.add(activeSsh.serverId);
-          }
-        } catch {
-          continue;
-        }
-      }
 
       if (requestId != null && selectionRequestIdRef.current !== requestId) {
         return;
       }
-      const nextTerminals = [...hydratedTerminals, ...adoptedTerminals];
-      setActiveSshTerminals((previous) => [...previous.filter((terminal) => terminal.deviceId !== deviceId), ...nextTerminals]);
+      setActiveSshTerminals((previous) => [...previous.filter((terminal) => terminal.deviceId !== deviceId), ...hydratedTerminals]);
     } catch {
       return;
     }
@@ -212,8 +211,7 @@ export function useAdminDashboard() {
       return;
     }
 
-    if (!runtimeSummaryHasActiveSsh(summary)) {
-      setActiveSshTerminals((previous) => previous.filter((terminal) => terminal.deviceId !== deviceId));
+    if (!runtimeSummaryHasActiveSsh(summary) && !(requestId != null && runtimeSummaryHasServers(summary))) {
       return;
     }
 
@@ -680,9 +678,10 @@ export function useAdminDashboard() {
     try {
       await deleteDevice(deviceId);
       setDeviceActionError(null);
-      refreshDevices();
+      void loadDevices();
       if (selectedDeviceId === deviceId) {
-        selectDevice('');
+        setSelectedTunnelServerId(null);
+        setSelectedDeviceId('');
       }
     } catch (err) {
       setDeviceActionError(err instanceof Error ? err.message : 'Failed to delete device');
@@ -769,17 +768,17 @@ export function useAdminDashboard() {
 
   useEffect(() => {
     const sub = subscribeDevicesStream((event) => {
-      if (!event?.deviceId) {
+      if (!event?.id) {
         return;
       }
       setDevices((current) =>
         current.map((device) =>
-          device.id === event.deviceId
+          device.id === event.id
             ? { ...device, status: event.status, lastSeenAt: event.lastSeenAt }
             : device,
         ),
       );
-      if (selectedDeviceId === event.deviceId) {
+      if (selectedDeviceId === event.id) {
         setSelectedDeviceDetails((current) =>
           current
             ? { ...current, status: event.status, lastSeenAt: event.lastSeenAt }
@@ -828,9 +827,23 @@ export function useAdminDashboard() {
     }
 
     void loadSelectedDevice(selectedDeviceId);
+  }, [selectedDeviceId, recentLogsLimit]);
+
+  useEffect(() => {
+    if (!selectedDeviceId) {
+      return;
+    }
+
     void loadCommands(selectedDeviceId);
+  }, [selectedDeviceId, commandsLimit]);
+
+  useEffect(() => {
+    if (!selectedDeviceId) {
+      return;
+    }
+
     void loadTelemetry(selectedDeviceId);
-  }, [selectedDeviceId, telemetryTypeFilter, telemetryTextFilter, telemetryFromTsFilter, telemetryToTsFilter, recentLogsLimit, commandsLimit, telemetryLimit]);
+  }, [selectedDeviceId, telemetryTypeFilter, telemetryTextFilter, telemetryFromTsFilter, telemetryToTsFilter, telemetryLimit]);
 
   useEffect(() => {
     if (!selectedDeviceId || !selectedTunnelServerId) {
@@ -1029,6 +1042,7 @@ export function useAdminDashboard() {
       void runStartServerSshTerminal(deviceId, serverId);
     },
     activeSshTerminals,
+    removeSshTerminal,
     retryRuntimeSummary: () => {
       if (selectedDeviceId) {
         void loadRuntimeSummaryOnly(selectedDeviceId);

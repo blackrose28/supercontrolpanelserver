@@ -81,7 +81,11 @@ export type PtyOpenResponse = {
 export type PtySessionEntry = {
   sessionId?: string;
   deviceId?: string;
+  kind?: string;
+  serverId?: string;
+  localSessionId?: string;
   state?: string;
+  openedAt?: string;
 };
 
 type PtySessionsResponse = {
@@ -705,7 +709,8 @@ export function subscribeCommandsStream(deviceId: string, onMessage: () => void)
 }
 
 export type DeviceStatusChangeEvent = {
-  deviceId: string;
+  id: string;
+  deviceId?: string;
   status: string;
   lastSeenAt: string;
 };
@@ -719,7 +724,11 @@ export function subscribeDevicesStream(onMessage: (event?: DeviceStatusChangeEve
 
   const handleEvent = (event: MessageEvent) => {
     try {
-      onMessage(JSON.parse(event.data) as DeviceStatusChangeEvent);
+      const payload = JSON.parse(event.data) as DeviceStatusChangeEvent;
+      onMessage({
+        ...payload,
+        id: payload.id ?? payload.deviceId ?? '',
+      });
     } catch {
       onMessage(undefined);
     }
@@ -826,7 +835,7 @@ export async function verifyTotpSetup(totpCode: string): Promise<{ enabled: bool
     redirectIfUnauthorized(response);
   }
   if (!response.ok) {
-    const msg = await extractErrorMessage(response);
+    const msg = await responseErrorMessage(response, 'Invalid TOTP code');
     throw new Error(msg || 'Invalid TOTP code');
   }
   return response.json();
@@ -844,7 +853,7 @@ export async function disableTotp(totpCode: string): Promise<{ enabled: boolean 
     redirectIfUnauthorized(response);
   }
   if (!response.ok) {
-    const msg = await extractErrorMessage(response);
+    const msg = await responseErrorMessage(response, 'Invalid TOTP code');
     throw new Error(msg || 'Invalid TOTP code');
   }
   return response.json();

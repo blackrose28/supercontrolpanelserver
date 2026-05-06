@@ -7,6 +7,7 @@ import { DatabaseService } from '../database/database.service';
 import { CommandStore, type CommandRecord } from './command.store';
 
 const createdPaths: string[] = [];
+const createdDatabases: DatabaseService[] = [];
 
 function createStore() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-server-command-store-'));
@@ -16,6 +17,7 @@ function createStore() {
   process.env.CC_DB_PATH = dbPath;
 
   const database = new DatabaseService();
+  createdDatabases.push(database);
   ensureDevice(database, 'dev-1');
   ensureDevice(database, 'dev-2');
   const store = new CommandStore(database);
@@ -34,6 +36,9 @@ function ensureDevice(database: DatabaseService, deviceId: string) {
 }
 
 afterEach(() => {
+  for (const database of createdDatabases.splice(0)) {
+    database.connection.close();
+  }
   for (const p of createdPaths.splice(0)) {
     fs.rmSync(p, { recursive: true, force: true });
   }

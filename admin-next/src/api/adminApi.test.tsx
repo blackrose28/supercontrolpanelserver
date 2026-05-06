@@ -774,7 +774,7 @@ describe('adminApi', () => {
 
     listeners.get('device-connected')?.({ data: JSON.stringify({ deviceId: 'dev-1', status: 'connected', lastSeenAt: '2026-04-28T00:00:00.000Z' }) } as MessageEvent);
 
-    expect(onMessage).toHaveBeenCalledWith({ deviceId: 'dev-1', status: 'connected', lastSeenAt: '2026-04-28T00:00:00.000Z' });
+    expect(onMessage).toHaveBeenCalledWith({ id: 'dev-1', deviceId: 'dev-1', status: 'connected', lastSeenAt: '2026-04-28T00:00:00.000Z' });
 
     sub.unsubscribe();
     expect(close).toHaveBeenCalledTimes(1);
@@ -798,7 +798,7 @@ describe('adminApi', () => {
     const sub = subscribeDevicesStream(onMessage);
     listeners.get('device-disconnected')?.({ data: JSON.stringify({ deviceId: 'dev-2', status: 'disconnected', lastSeenAt: '2026-04-28T01:00:00.000Z' }) } as MessageEvent);
 
-    expect(onMessage).toHaveBeenCalledWith({ deviceId: 'dev-2', status: 'disconnected', lastSeenAt: '2026-04-28T01:00:00.000Z' });
+    expect(onMessage).toHaveBeenCalledWith({ id: 'dev-2', deviceId: 'dev-2', status: 'disconnected', lastSeenAt: '2026-04-28T01:00:00.000Z' });
 
     sub.unsubscribe();
   });

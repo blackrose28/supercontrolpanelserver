@@ -138,6 +138,14 @@ export class D1CommandStore {
     return this.getRequiredCommand(commandId);
   }
 
+  async nextReqSeq(deviceId: string): Promise<number> {
+    const row = await this.db.prepare('SELECT COALESCE(MAX(reqSeq), 0) + 1 AS nextReqSeq FROM commands WHERE deviceId = ?')
+      .bind(deviceId)
+      .first<{ nextReqSeq?: number | string | null }>();
+    const value = Number(row?.nextReqSeq);
+    return Number.isFinite(value) && value > 0 ? value : 1;
+  }
+
   async markExecuting(commandId: string, executingAt: string): Promise<WorkerCommandRecord> {
     const current = await this.getRequiredCommand(commandId);
     if (TERMINAL_STATES.has(current.state)) {

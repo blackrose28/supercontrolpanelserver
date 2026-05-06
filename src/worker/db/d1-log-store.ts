@@ -24,6 +24,7 @@ export type WorkerTelemetryFilter = {
 export type WorkerDeviceRuntimeSummary = {
   deviceId: string;
   updatedAt: string | null;
+  agentRunId?: string | null;
   inventory?: unknown;
   functions: Record<string, {
     functionId: string;
@@ -100,6 +101,7 @@ function parseRuntimeSummary(row: RuntimeRow | null | undefined, deviceId: strin
     return {
       deviceId,
       updatedAt: row.updatedAt ?? null,
+      agentRunId: typeof parsed?.agentRunId === 'string' ? parsed.agentRunId : parsed?.agentRunId == null ? null : undefined,
       functions: parsed?.functions && typeof parsed.functions === 'object' ? parsed.functions : {},
       inventory: parsed?.inventory,
     };
@@ -235,6 +237,34 @@ export class D1LogStore {
     return results.map((row) => parseRuntimeSummary(row, row.deviceId));
   }
 
+  async noteAgentRun(deviceId: string, agentRunId: string, ts: string): Promise<{ changed: boolean; previousAgentRunId: string | null }> {
+    const summary = await this.getDeviceRuntimeSummary(deviceId);
+    const previousAgentRunId = typeof summary.agentRunId === 'string' && summary.agentRunId.trim() ? summary.agentRunId : null;
+    const changed = Boolean(previousAgentRunId && previousAgentRunId !== agentRunId);
+    summary.agentRunId = agentRunId;
+    summary.updatedAt = ts;
+    if (changed) {
+      for (const [functionId, state] of Object.entries(summary.functions)) {
+        if (!functionId.startsWith('server-tunnel-') && !functionId.startsWith('server-ssh-')) {
+          continue;
+        }
+        summary.functions[functionId] = {
+          ...state,
+          state: 'idle',
+          message: 'Agent restarted; previous in-memory session was discarded.',
+          sessionId: null,
+          observedAt: ts,
+          raw: {
+            ...(state.raw && typeof state.raw === 'object' ? state.raw as Record<string, unknown> : {}),
+            reasonCode: 'AGENT_RESTARTED',
+          },
+        };
+      }
+    }
+    await this.saveRuntimeSummary(summary, ts);
+    return { changed, previousAgentRunId };
+  }
+
   getRetentionSettings() {
     return { maxEventsPerDevice: this.maxEventsPerDevice, maxAgeDays: this.maxAgeDays };
   }
@@ -319,13 +349,17 @@ export class D1LogStore {
     }
     const summary = await this.getDeviceRuntimeSummary(event.deviceId);
     summary.updatedAt = event.ts;
+    const eventPayload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, unknown> : {};
+    if (typeof eventPayload.agentRunId === 'string' && eventPayload.agentRunId.trim()) {
+      summary.agentRunId = eventPayload.agentRunId.trim();
+    }
 
     if (event.type === 'inventory') {
       summary.inventory = event.payload;
     }
 
     if (event.type === 'status_snapshot') {
-      const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, unknown> : {};
+      const payload = eventPayload;
       summary.functions = {};
       const functionStates = Array.isArray(payload.functionStates) ? payload.functionStates : [];
       for (const fs of functionStates) {
@@ -345,7 +379,7 @@ export class D1LogStore {
     }
 
     if (event.type === 'function-status') {
-      const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, unknown> : {};
+      const payload = eventPayload;
       const functionId = typeof payload.functionId === 'string' && payload.functionId.trim() ? payload.functionId : event.functionId || 'unknown';
       summary.functions[functionId] = {
         functionId,
@@ -359,10 +393,18 @@ export class D1LogStore {
       };
     }
 
+    await this.saveRuntimeSummary(summary, event.ts);
+  }
+
+  private async saveRuntimeSummary(summary: WorkerDeviceRuntimeSummary, fallbackUpdatedAt: string): Promise<void> {
     await this.db.prepare(`
       INSERT INTO device_runtime_state (deviceId, summaryJson, updatedAt)
       VALUES (?, ?, ?)
       ON CONFLICT(deviceId) DO UPDATE SET summaryJson = excluded.summaryJson, updatedAt = excluded.updatedAt
-    `).bind(event.deviceId, JSON.stringify({ inventory: summary.inventory ?? null, functions: summary.functions }), summary.updatedAt ?? event.ts).run();
+    `).bind(
+      summary.deviceId,
+      JSON.stringify({ agentRunId: summary.agentRunId ?? null, inventory: summary.inventory ?? null, functions: summary.functions }),
+      summary.updatedAt ?? fallbackUpdatedAt,
+    ).run();
   }
 }
