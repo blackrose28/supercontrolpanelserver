@@ -1,16 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
 import type { RuntimeSummary, TunnelLogEntry } from '../api/adminApi';
-import { SshTerminalPanel } from './SshTerminalPanel';
+import { Link } from 'react-router-dom';
 import { formatTimestamp } from '../utils/formatTimestamp';
-
-type ServerDetailTab = 'ssh' | 'logs';
 
 type RuntimeSummarySectionProps = {
   selectedDeviceId: string | null;
   runtimeSummaryLoading: boolean;
   runtimeSummaryError: string | null;
   runtimeSummary: RuntimeSummary | null;
-  deviceActionLoadingId: string | null;
   selectedTunnelServerId: string | null;
   tunnelLogs: TunnelLogEntry[];
   tunnelLogsLoading: boolean;
@@ -19,10 +15,8 @@ type RuntimeSummarySectionProps = {
   onLoadMoreTunnelLogs: () => void;
   onSelectTunnelServer: (serverId: string) => void;
   onRefreshTunnelLogs: () => void;
-  onRequestStartServerTunnel: (deviceId: string, serverId: string) => void;
-  onRequestStopServerTunnel: (deviceId: string, serverId: string) => void;
-  onStartServerSshTerminal: (deviceId: string, serverId: string) => void;
   sshTerminals?: Array<{ deviceId: string; serverId: string; sessionId: string }>;
+  onSshTerminalClosed?: (terminal: { deviceId: string; serverId: string; sessionId: string }) => void;
   onRetry: () => void;
 };
 
@@ -31,7 +25,6 @@ export function RuntimeSummarySection({
   runtimeSummaryLoading,
   runtimeSummaryError,
   runtimeSummary,
-  deviceActionLoadingId,
   selectedTunnelServerId,
   tunnelLogs,
   tunnelLogsLoading,
@@ -40,23 +33,10 @@ export function RuntimeSummarySection({
   onLoadMoreTunnelLogs,
   onSelectTunnelServer,
   onRefreshTunnelLogs,
-  onRequestStartServerTunnel,
-  onRequestStopServerTunnel,
-  onStartServerSshTerminal,
   sshTerminals = [],
+  onSshTerminalClosed,
   onRetry,
 }: RuntimeSummarySectionProps) {
-  const [serverDetailTabs, setServerDetailTabs] = useState<Record<string, ServerDetailTab>>({});
-  const tunnelLogOutputRef = useRef<HTMLPreElement | null>(null);
-
-  useEffect(() => {
-    const output = tunnelLogOutputRef.current;
-    if (!output || !selectedTunnelServerId || tunnelLogsLoading || tunnelLogsError || tunnelLogs.length === 0) {
-      return;
-    }
-    output.scrollTop = output.scrollHeight;
-  }, [selectedTunnelServerId, tunnelLogsLoading, tunnelLogsError, tunnelLogs.length, serverDetailTabs]);
-
   const boundaryServers = Array.isArray(runtimeSummary?.inventory?.servers)
     ? runtimeSummary.inventory.servers.filter(
         (server) => String(server?.connectionMethod || '').toLowerCase() === 'boundary' && String(server?.id || '').trim(),
@@ -139,12 +119,9 @@ export function RuntimeSummarySection({
                 const functionId = `server-tunnel-${serverId}`;
                 const tunnelState = String(runtimeSummary?.functions?.[functionId]?.state || '').toLowerCase();
                 const isRunning = tunnelState === 'running';
-                const sshTerminal = sshTerminals.find((terminal) => terminal.serverId === serverId && terminal.deviceId === selectedDeviceId);
-                const hasTunnelLogsPanel = selectedTunnelServerId === serverId;
-                const hasSshPanel = Boolean(sshTerminal);
-                const hasDetailDrawer = hasTunnelLogsPanel || hasSshPanel;
-                const activeDetailTab = serverDetailTabs[serverId] ?? (hasTunnelLogsPanel ? 'logs' : 'ssh');
-                const showLoadMoreLogs = hasTunnelLogsPanel && tunnelLogsTotal > tunnelLogs.length;
+                const serverRuntimeHref = selectedDeviceId
+                  ? `/admin/devices/${encodeURIComponent(selectedDeviceId)}/servers/${encodeURIComponent(serverId)}/runtime`
+                  : '#';
 
                 return (
                   <li key={serverId} className="runtime-summary-tunnel-card">
@@ -158,140 +135,14 @@ export function RuntimeSummarySection({
                       </span>
                     </div>
                     <div className="runtime-summary-tunnel-actions">
-                      {isRunning ? (
-                        <button
-                          type="button"
-                          className="runtime-toolbar-button"
-                          disabled={!selectedDeviceId || deviceActionLoadingId === selectedDeviceId}
-                          onClick={() => {
-                            if (!selectedDeviceId) {
-                              return;
-                            }
-                            onRequestStopServerTunnel(selectedDeviceId, serverId);
-                          }}
-                        >
-                          {deviceActionLoadingId === selectedDeviceId ? 'Requesting...' : `Stop tunnel for ${serverName}`}
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="runtime-toolbar-button runtime-toolbar-button-primary"
-                          disabled={!selectedDeviceId || deviceActionLoadingId === selectedDeviceId}
-                          onClick={() => {
-                            if (!selectedDeviceId) {
-                              return;
-                            }
-                            onRequestStartServerTunnel(selectedDeviceId, serverId);
-                          }}
-                        >
-                          {deviceActionLoadingId === selectedDeviceId ? 'Requesting...' : `Start tunnel for ${serverName}`}
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        className="runtime-toolbar-button"
-                        disabled={!selectedDeviceId}
-                        onClick={() => {
-                          setServerDetailTabs((previous) => ({ ...previous, [serverId]: 'logs' }));
-                          onSelectTunnelServer(serverId);
-                        }}
-                      >
-                        {hasTunnelLogsPanel ? `Viewing logs for ${serverName}` : `View logs for ${serverName}`}
-                      </button>
-                      <button
-                        type="button"
+                      <Link
                         className="runtime-toolbar-button runtime-toolbar-button-primary"
-                        disabled={!selectedDeviceId || !isRunning || deviceActionLoadingId === selectedDeviceId}
-                        onClick={() => {
-                          if (!selectedDeviceId) {
-                            return;
-                          }
-                          setServerDetailTabs((previous) => ({ ...previous, [serverId]: 'ssh' }));
-                          onStartServerSshTerminal(selectedDeviceId, serverId);
-                        }}
+                        aria-disabled={!selectedDeviceId}
+                        to={serverRuntimeHref}
                       >
-                        SSH terminal for {serverName}
-                      </button>
+                        Open runtime for {serverName}
+                      </Link>
                     </div>
-                    {hasDetailDrawer ? (
-                      <div className="runtime-summary-server-drawer" aria-label={`Server runtime details for ${serverName}`}>
-                        {hasSshPanel && hasTunnelLogsPanel ? (
-                          <div className="runtime-summary-detail-tabs" role="tablist" aria-label={`Runtime panes for ${serverName}`}>
-                            <button
-                              type="button"
-                              role="tab"
-                              className="runtime-summary-detail-tab"
-                              aria-selected={activeDetailTab === 'ssh'}
-                              onClick={() => setServerDetailTabs((previous) => ({ ...previous, [serverId]: 'ssh' }))}
-                            >
-                              SSH Terminal
-                            </button>
-                            <button
-                              type="button"
-                              role="tab"
-                              className="runtime-summary-detail-tab"
-                              aria-selected={activeDetailTab === 'logs'}
-                              onClick={() => setServerDetailTabs((previous) => ({ ...previous, [serverId]: 'logs' }))}
-                            >
-                              Tunnel Logs
-                            </button>
-                          </div>
-                        ) : null}
-                        {sshTerminal ? (
-                          <div className={activeDetailTab === 'ssh' ? 'runtime-summary-detail-pane' : 'runtime-summary-detail-pane is-hidden'} aria-hidden={activeDetailTab !== 'ssh'}>
-                            <SshTerminalPanel
-                              terminal={sshTerminal}
-                              title={`SSH terminal for ${serverName}`}
-                            />
-                          </div>
-                        ) : null}
-                        {hasTunnelLogsPanel ? (
-                          <div className={activeDetailTab === 'logs' ? 'runtime-summary-detail-pane' : 'runtime-summary-detail-pane is-hidden'} aria-hidden={activeDetailTab !== 'logs'}>
-                            <div className="runtime-summary-log-panel runtime-summary-log-panel-inline">
-                              <h4>Tunnel logs</h4>
-                              <div className="runtime-summary-log-toolbar">
-                                <div>
-                                  <p>Selected tunnel server: {serverId}</p>
-                                  <p className="runtime-summary-log-toolbar-meta">
-                                    Showing {selectedTunnelLogCount} of {tunnelLogsTotal || selectedTunnelLogCount} log entries
-                                  </p>
-                                </div>
-                                <div className="runtime-summary-log-actions">
-                                  {showLoadMoreLogs ? (
-                                    <button
-                                      type="button"
-                                      className="runtime-toolbar-button"
-                                      onClick={onLoadMoreTunnelLogs}
-                                      disabled={tunnelLogsLoading}
-                                    >
-                                      Load more tunnel logs
-                                    </button>
-                                  ) : null}
-                                  <button
-                                    type="button"
-                                    className="runtime-toolbar-button"
-                                    onClick={onRefreshTunnelLogs}
-                                    disabled={tunnelLogsLoading}
-                                  >
-                                    Refresh tunnel logs
-                                  </button>
-                                </div>
-                              </div>
-                              {tunnelLogsLoading ? <p>Loading tunnel logs...</p> : null}
-                              {tunnelLogsError ? <p>{tunnelLogsError}</p> : null}
-                              {!tunnelLogsLoading && !tunnelLogsError ? (
-                                tunnelLogs.length > 0 ? (
-                                  <pre ref={tunnelLogOutputRef} className="runtime-summary-log-output runtime-summary-terminal-viewport" aria-label="Tunnel logs">{tunnelLogs.map((entry) => entry.data || '').join('\n')}</pre>
-                                ) : (
-                                  <p>No tunnel logs yet.</p>
-                                )
-                              ) : null}
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
                   </li>
                 );
               })}

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { LogoutButton } from '../components/LogoutButton';
 import { DeviceDetailsSection } from '../components/DeviceDetailsSection';
 import { CommandsSection } from '../components/CommandsSection';
 import { DeviceListSection } from '../components/DeviceListSection';
@@ -97,6 +98,7 @@ export function AdminDashboardPage() {
     requestStopServerTunnel,
     startServerSshTerminal,
     activeSshTerminals,
+    removeSshTerminal,
     requestStatusSnapshot,
     retryRuntimeSummary,
     retryRecentLogs,
@@ -194,7 +196,6 @@ export function AdminDashboardPage() {
               runtimeSummaryLoading={runtimeSummaryLoading}
               runtimeSummaryError={runtimeSummaryError}
               runtimeSummary={runtimeSummary}
-              deviceActionLoadingId={deviceActionLoadingId}
               selectedTunnelServerId={selectedTunnelServerId}
               tunnelLogs={tunnelLogs}
               tunnelLogsLoading={tunnelLogsLoading}
@@ -203,10 +204,8 @@ export function AdminDashboardPage() {
               onLoadMoreTunnelLogs={loadMoreTunnelLogs}
               onSelectTunnelServer={selectTunnelServer}
               onRefreshTunnelLogs={refreshTunnelLogs}
-              onRequestStartServerTunnel={requestStartServerTunnel}
-              onRequestStopServerTunnel={requestStopServerTunnel}
-              onStartServerSshTerminal={startServerSshTerminal}
               sshTerminals={activeSshTerminals}
+              onSshTerminalClosed={removeSshTerminal}
               onRetry={retryRuntimeSummary}
             />
           </div>
@@ -310,6 +309,10 @@ export function AdminDashboardPage() {
 
   return (
     <>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, padding: '0 8px' }}>
+        <h1 style={{ margin: 0, fontSize: 24 }}>Admin Dashboard</h1>
+        <LogoutButton />
+      </header>
       <TotpSection />
       <SessionSection />
       <AuditLogSection />

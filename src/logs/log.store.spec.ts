@@ -7,6 +7,7 @@ import { DatabaseService } from '../database/database.service';
 import { LogStore, type TelemetryEvent } from './log.store';
 
 const createdPaths: string[] = [];
+const createdDatabases: DatabaseService[] = [];
 
 function createStore(options?: { maxEventsPerDevice?: number }) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-server-log-store-'));
@@ -22,6 +23,7 @@ function createStore(options?: { maxEventsPerDevice?: number }) {
   delete process.env.CC_LOG_RETENTION_MAX_AGE_DAYS;
 
   const database = new DatabaseService();
+  createdDatabases.push(database);
   const store = new LogStore(database);
   return { database, store };
 }
@@ -62,6 +64,10 @@ afterEach(() => {
   delete process.env.CC_DB_PATH;
   delete process.env.CC_LOG_RETENTION_MAX_EVENTS_PER_DEVICE;
   delete process.env.CC_LOG_RETENTION_MAX_AGE_DAYS;
+
+  while (createdDatabases.length) {
+    createdDatabases.pop()?.connection.close();
+  }
 
   while (createdPaths.length) {
     const target = createdPaths.pop();

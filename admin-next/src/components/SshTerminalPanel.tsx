@@ -9,6 +9,7 @@ const DEFAULT_ROWS = 32;
 type SshTerminalPanelProps = {
   terminal: { deviceId: string; serverId: string; sessionId: string } | null;
   title?: string;
+  onTerminalClosed?: (event: { deviceId: string; serverId: string; sessionId: string; reasonCode?: string }) => void;
 };
 
 function getCsrfToken(): string {
@@ -32,7 +33,7 @@ function sendPtyInput(socket: WebSocket, activeTerminal: NonNullable<SshTerminal
   }));
 }
 
-export function SshTerminalPanel({ terminal, title = 'SSH Terminal' }: SshTerminalPanelProps) {
+export function SshTerminalPanel({ terminal, title = 'SSH Terminal', onTerminalClosed }: SshTerminalPanelProps) {
   const [state, setState] = useState('idle');
   const containerRef = useRef<HTMLDivElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -67,13 +68,14 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal' }: SshTermin
     fitAddonRef.current = fitAddon;
 
     let cleanedUp = false;
+    let inputEnabled = true;
 
     const socket = new WebSocket(getPtyWebSocketUrl());
     socketRef.current = socket;
     setState('connecting');
 
     const dataDisposable = xterm.onData((data) => {
-      if (socket.readyState === WebSocket.OPEN) {
+      if (inputEnabled && socket.readyState === WebSocket.OPEN) {
         sendPtyInput(socket, terminal, data);
       }
     });
@@ -117,10 +119,22 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal' }: SshTermin
       } else if (message?.type === 'pty_opened') {
         setState(String(payload.state || 'open'));
       } else if (message?.type === 'pty_exit') {
+        inputEnabled = false;
         setState('closed');
+        onTerminalClosed?.({ deviceId: terminal.deviceId, serverId: terminal.serverId, sessionId: terminal.sessionId });
         xterm.writeln('\r\nSSH terminal closed.');
       } else if (message?.type === 'pty_error') {
-        setState('error');
+        const code = typeof payload.code === 'string' ? payload.code : '';
+        if (code === 'PTY_NOT_FOUND' || code === 'PTY_SESSION_NOT_FOUND' || code === 'PTY_SESSION_NOT_ACTIVE') {
+          inputEnabled = false;
+          setState('closed');
+          onTerminalClosed?.({ deviceId: terminal.deviceId, serverId: terminal.serverId, sessionId: terminal.sessionId, reasonCode: code });
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.close();
+          }
+        } else {
+          setState('error');
+        }
         xterm.writeln(`\r\n${payload.message || payload.code || 'PTY error'}\r\n`);
       }
     });
@@ -159,7 +173,7 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal' }: SshTermin
         fitAddonRef.current = null;
       }
     };
-  }, [terminal?.deviceId, terminal?.serverId, terminal?.sessionId]);
+  }, [terminal?.deviceId, terminal?.serverId, terminal?.sessionId, onTerminalClosed]);
 
   if (!terminal) {
     return null;

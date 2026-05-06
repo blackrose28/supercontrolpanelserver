@@ -4,6 +4,7 @@ import worker, { AgentConnectionDurableObject } from './index';
 import { D1_SCHEMA_SQL } from './db/d1-schema';
 import { D1CommandStore } from './db/d1-command-store';
 import { D1DeviceStore } from './db/d1-device-store';
+import { D1LogStore } from './db/d1-log-store';
 import { D1PtyAuditStore, D1PtySessionStore } from './db/d1-pty-store';
 
 class TestD1PreparedStatement {
@@ -76,6 +77,185 @@ describe('Worker admin PTY WebSocket auth', () => {
 
     expect(response.status).toBe(426);
     await expect(response.json()).resolves.toMatchObject({ error: 'WEBSOCKET_UPGRADE_REQUIRED' });
+  });
+
+  it('lists PTY sessions for a device over the admin API', async () => {
+    const env = await createEnv();
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({
+      id: 'row-server-ssh-1',
+      sessionId: 'server-ssh-srv-1-11111111-1111-4111-8111-111111111111',
+      deviceId: 'dev-1',
+      cols: 120,
+      rows: 32,
+      openedAt: '2026-04-29T00:00:00.000Z',
+    });
+    await sessions.markOpen('server-ssh-srv-1-11111111-1111-4111-8111-111111111111', '2026-04-29T00:00:01.000Z');
+
+    const response = await worker.fetch(new Request('https://cc.example.test/v1/devices/dev-1/pty-sessions', {
+      headers: { authorization: 'Bearer admin-token' },
+    }), env as any);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      items: [
+        {
+          deviceId: 'dev-1',
+          sessionId: 'server-ssh-srv-1-11111111-1111-4111-8111-111111111111',
+          state: 'open',
+          cols: 120,
+          rows: 32,
+        },
+      ],
+    });
+  });
+
+  it('omits failed PTY_NOT_FOUND sessions from the admin PTY session list', async () => {
+    const env = await createEnv();
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({
+      id: 'row-failed-missing-1',
+      sessionId: 'server-ssh-srv-1-missing-1',
+      deviceId: 'dev-1',
+      cols: 120,
+      rows: 32,
+      openedAt: '2026-04-29T00:00:00.000Z',
+    });
+    await sessions.markOpenFailed('server-ssh-srv-1-missing-1', 'PTY_NOT_FOUND', 'PTY session not found', '2026-04-29T00:00:01.000Z');
+    await sessions.createOpening({
+      id: 'row-opening-1',
+      sessionId: 'server-ssh-srv-1-opening-1',
+      deviceId: 'dev-1',
+      cols: 120,
+      rows: 32,
+      openedAt: '2026-04-29T00:00:02.000Z',
+    });
+
+    const response = await worker.fetch(new Request('https://cc.example.test/v1/devices/dev-1/pty-sessions', {
+      headers: { authorization: 'Bearer admin-token' },
+    }), env as any);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      items: [
+        {
+          sessionId: 'server-ssh-srv-1-opening-1',
+          state: 'opening',
+        },
+      ],
+    });
+  });
+
+  it('expires stale opening PTY sessions before returning the admin PTY session list', async () => {
+    const env = await createEnv();
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({
+      id: 'row-stale-opening-1',
+      sessionId: 'server-ssh-srv-1-stale-opening',
+      deviceId: 'dev-1',
+      kind: 'server_ssh',
+      serverId: 'srv-1',
+      cols: 120,
+      rows: 32,
+      openedAt: '2026-04-28T23:57:00.000Z',
+    });
+    await sessions.createOpening({
+      id: 'row-fresh-opening-1',
+      sessionId: 'server-ssh-srv-2-fresh-opening',
+      deviceId: 'dev-1',
+      kind: 'server_ssh',
+      serverId: 'srv-2',
+      cols: 120,
+      rows: 32,
+      openedAt: '2026-04-28T23:59:59.000Z',
+    });
+
+    const response = await worker.fetch(new Request('https://cc.example.test/v1/devices/dev-1/pty-sessions', {
+      headers: { authorization: 'Bearer admin-token' },
+    }), env as any);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      items: [
+        {
+          sessionId: 'server-ssh-srv-2-fresh-opening',
+          state: 'opening',
+        },
+      ],
+    });
+    await expect(sessions.get('server-ssh-srv-1-stale-opening')).resolves.toMatchObject({
+      state: 'expired',
+      failureCode: 'PTY_OPEN_TIMEOUT',
+    });
+  });
+
+  it('adds serverId metadata to listed server SSH PTY sessions from the command payload', async () => {
+    const env = await createEnv();
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({
+      id: 'row-legacy-server-ssh-1',
+      sessionId: '36528a8f-fa45-454c-82fa-4fa34fb4daec',
+      deviceId: 'dev-1',
+      cols: 120,
+      rows: 32,
+      openedAt: '2026-05-05T04:47:29.071Z',
+    });
+    await new D1CommandStore(env.CC_DB).createQueuedCommand({
+      id: 'command-row-1',
+      commandId: '36528a8f-fa45-454c-82fa-4fa34fb4daec',
+      deviceId: 'dev-1',
+      commandType: 'start_server_ssh',
+      actorType: 'admin_session',
+      payload: { serverId: 'srv-1', sessionId: '36528a8f-fa45-454c-82fa-4fa34fb4daec' },
+      submittedAt: '2026-05-05T04:47:29.071Z',
+    });
+
+    const response = await worker.fetch(new Request('https://cc.example.test/v1/devices/dev-1/pty-sessions', {
+      headers: { authorization: 'Bearer admin-token' },
+    }), env as any);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      items: [
+        {
+          sessionId: '36528a8f-fa45-454c-82fa-4fa34fb4daec',
+          state: 'opening',
+          serverId: 'srv-1',
+        },
+      ],
+    });
+  });
+
+  it('lists PTY session kind and server metadata stored on the PTY row', async () => {
+    const env = await createEnv();
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({
+      id: 'row-server-ssh-metadata-1',
+      sessionId: 'server-ssh-srv-1-11111111-1111-4111-8111-111111111111',
+      deviceId: 'dev-1',
+      kind: 'server_ssh',
+      serverId: 'srv-1',
+      localSessionId: 'local-ssh-session-1',
+      cols: 120,
+      rows: 32,
+      openedAt: '2026-05-05T04:47:29.071Z',
+    });
+
+    const response = await worker.fetch(new Request('https://cc.example.test/v1/devices/dev-1/pty-sessions', {
+      headers: { authorization: 'Bearer admin-token' },
+    }), env as any);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      items: [
+        {
+          sessionId: 'server-ssh-srv-1-11111111-1111-4111-8111-111111111111',
+          kind: 'server_ssh',
+          serverId: 'srv-1',
+          localSessionId: 'local-ssh-session-1',
+        },
+      ],
+    });
   });
 
   it('accepts authenticated admin PTY WebSocket upgrades with a real Response', async () => {
@@ -216,6 +396,51 @@ describe('Worker admin PTY WebSocket auth', () => {
   });
 
 
+  it('accepts browser PTY messages that wrap fields in payload', async () => {
+    const OriginalResponse = globalThis.Response;
+    class TestUpgradeResponse {
+      readonly status: number;
+      readonly webSocket: unknown;
+      constructor(_body: unknown, init: { status?: number; webSocket?: unknown } = {}) {
+        this.status = init.status ?? 200;
+        this.webSocket = init.webSocket;
+      }
+    }
+    vi.stubGlobal('Response', TestUpgradeResponse as any);
+    const listeners = new Map<string, (event: { data?: unknown }) => unknown>();
+    const clientSocket = { client: true };
+    const serverSocket = {
+      accept: vi.fn(),
+      send: vi.fn(),
+      addEventListener: vi.fn((type: string, listener: (event: { data?: unknown }) => unknown) => listeners.set(type, listener)),
+    };
+    vi.stubGlobal('WebSocketPair', vi.fn(function(this: unknown) { return [clientSocket, serverSocket]; }) as any);
+    const env = await createEnv();
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({ id: 'row-pty-payload', sessionId: 'pty-payload', deviceId: 'dev-1', cols: 80, rows: 24, openedAt: '2026-04-29T00:00:00.000Z' });
+    await sessions.markOpen('pty-payload', '2026-04-29T00:00:01.000Z');
+
+    try {
+      await worker.fetch(wsRequest({ authorization: 'Bearer admin-token' }), env as any);
+      await listeners.get('message')?.({
+        data: JSON.stringify({
+          type: 'pty_attach',
+          payload: { deviceId: 'dev-1', sessionId: 'pty-payload', csrfToken: 'csrf' },
+        }),
+      });
+
+      await expect(sessions.get('pty-payload')).resolves.toMatchObject({
+        attachedActorType: 'admin_env_token',
+        attachedActorId: 'CC_ADMIN_API_TOKEN',
+      });
+      expect(serverSocket.send).toHaveBeenCalledWith(expect.stringContaining('pty_attached'));
+      expect(serverSocket.send).not.toHaveBeenCalledWith(expect.stringContaining('SESSION_ID_REQUIRED'));
+    } finally {
+      vi.stubGlobal('Response', OriginalResponse);
+    }
+  });
+
+
   it('dispatches write and resize requests for an attached PTY session', async () => {
     const OriginalResponse = globalThis.Response;
     class TestUpgradeResponse {
@@ -265,6 +490,251 @@ describe('Worker admin PTY WebSocket auth', () => {
     } finally {
       vi.stubGlobal('Response', OriginalResponse);
     }
+  });
+
+  it('assigns unique reqSeq values so PTY nacks fail the matching command only', async () => {
+    const OriginalResponse = globalThis.Response;
+    class TestUpgradeResponse {
+      readonly status: number;
+      readonly webSocket: unknown;
+      constructor(_body: unknown, init: { status?: number; webSocket?: unknown } = {}) {
+        this.status = init.status ?? 200;
+        this.webSocket = init.webSocket;
+      }
+    }
+    vi.stubGlobal('Response', TestUpgradeResponse as any);
+    const listeners = new Map<string, (event: { data?: unknown }) => unknown>();
+    const clientSocket = { client: true };
+    const serverSocket = {
+      accept: vi.fn(),
+      send: vi.fn(),
+      addEventListener: vi.fn((type: string, listener: (event: { data?: unknown }) => unknown) => listeners.set(type, listener)),
+    };
+    vi.stubGlobal('WebSocketPair', vi.fn(function(this: unknown) { return [clientSocket, serverSocket]; }) as any);
+    const env = await createEnv();
+    env.CC_AGENT_DO = new FakeDurableObjectNamespace();
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({ id: 'row-pty-unique-seq', sessionId: 'pty-unique-seq', deviceId: 'dev-1', cols: 80, rows: 24, openedAt: '2026-04-29T00:00:00.000Z', attachedActorType: 'admin_env_token', attachedActorId: 'CC_ADMIN_API_TOKEN' });
+    await sessions.markOpen('pty-unique-seq', '2026-04-29T00:00:01.000Z');
+
+    try {
+      await worker.fetch(wsRequest({ authorization: 'Bearer admin-token' }), env as any);
+      await listeners.get('message')?.({ data: JSON.stringify({ type: 'pty_write', sessionId: 'pty-unique-seq', data: 'a' }) });
+      await listeners.get('message')?.({ data: JSON.stringify({ type: 'pty_resize', sessionId: 'pty-unique-seq', cols: 120, rows: 50 }) });
+
+      const firstEnvelope = await env.CC_AGENT_DO.requests[0].request.json() as any;
+      const secondEnvelope = await env.CC_AGENT_DO.requests[1].request.json() as any;
+      expect(firstEnvelope.seq).not.toBe(secondEnvelope.seq);
+
+      const durableObject = new AgentConnectionDurableObject({} as any, env as any);
+      await durableObject.webSocketMessage({ deserializeAttachment: () => ({ deviceId: 'dev-1' }), send: vi.fn() } as any, JSON.stringify({
+        type: 'nack',
+        deviceId: 'dev-1',
+        reqSeq: firstEnvelope.seq,
+        ts: '2026-04-29T00:00:02.000Z',
+        payload: { error: 'PTY_NOT_FOUND', detail: 'PTY session not found' },
+      }));
+
+      await expect(new D1CommandStore(env.CC_DB).getCommand(firstEnvelope.commandId)).resolves.toMatchObject({ state: 'failed', reasonCode: 'PTY_NOT_FOUND' });
+      await expect(new D1CommandStore(env.CC_DB).getCommand(secondEnvelope.commandId)).resolves.toMatchObject({ state: 'dispatched' });
+      await expect(sessions.get('pty-unique-seq')).resolves.toMatchObject({ state: 'failed', failureCode: 'PTY_NOT_FOUND' });
+    } finally {
+      vi.stubGlobal('Response', OriginalResponse);
+    }
+  });
+
+  it('rejects writes to terminal PTY sessions instead of dispatching stale commands', async () => {
+    const OriginalResponse = globalThis.Response;
+    class TestUpgradeResponse {
+      readonly status: number;
+      readonly webSocket: unknown;
+      constructor(_body: unknown, init: { status?: number; webSocket?: unknown } = {}) {
+        this.status = init.status ?? 200;
+        this.webSocket = init.webSocket;
+      }
+    }
+    vi.stubGlobal('Response', TestUpgradeResponse as any);
+    const listeners = new Map<string, (event: { data?: unknown }) => unknown>();
+    const clientSocket = { client: true };
+    const serverSocket = {
+      accept: vi.fn(),
+      send: vi.fn(),
+      addEventListener: vi.fn((type: string, listener: (event: { data?: unknown }) => unknown) => listeners.set(type, listener)),
+    };
+    vi.stubGlobal('WebSocketPair', vi.fn(function(this: unknown) { return [clientSocket, serverSocket]; }) as any);
+    const env = await createEnv();
+    env.CC_AGENT_DO = new FakeDurableObjectNamespace();
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({ id: 'row-pty-terminal', sessionId: 'pty-terminal', deviceId: 'dev-1', cols: 80, rows: 24, openedAt: '2026-04-29T00:00:00.000Z', attachedActorType: 'admin_env_token', attachedActorId: 'CC_ADMIN_API_TOKEN' });
+    await sessions.markOpenFailed('pty-terminal', 'PTY_NOT_FOUND', 'PTY session not found', '2026-04-29T00:00:01.000Z');
+
+    try {
+      await worker.fetch(wsRequest({ authorization: 'Bearer admin-token' }), env as any);
+      await listeners.get('message')?.({ data: JSON.stringify({ type: 'pty_write', sessionId: 'pty-terminal', data: 'stale' }) });
+
+      expect(serverSocket.send).toHaveBeenCalledWith(expect.stringContaining('PTY_SESSION_NOT_ACTIVE'));
+      expect(env.CC_AGENT_DO.requests).toHaveLength(0);
+      await expect(new D1CommandStore(env.CC_DB).listCommands({ deviceId: 'dev-1' })).resolves.toHaveLength(0);
+    } finally {
+      vi.stubGlobal('Response', OriginalResponse);
+    }
+  });
+
+  it('marks PTY sessions failed when command_status reports PTY_NOT_FOUND', async () => {
+    const env = await createEnv();
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({ id: 'row-status-missing', sessionId: 'pty-status-missing', deviceId: 'dev-1', cols: 80, rows: 24, openedAt: '2026-04-29T00:00:00.000Z' });
+    await sessions.markOpen('pty-status-missing', '2026-04-29T00:00:01.000Z');
+    const commands = new D1CommandStore(env.CC_DB);
+    await commands.createQueuedCommand({
+      id: 'cmd-status-missing-row',
+      commandId: 'cmd-status-missing',
+      deviceId: 'dev-1',
+      commandType: 'write_pty',
+      actorType: 'admin_env_token',
+      actorId: 'CC_ADMIN_API_TOKEN',
+      payload: { sessionId: 'pty-status-missing', data: 'x' },
+      payloadSummary: 'Write stale PTY',
+      submittedAt: '2026-04-29T00:00:01.000Z',
+    });
+    await commands.markDispatched('cmd-status-missing', 7, '2026-04-29T00:00:01.000Z');
+
+    const durableObject = new AgentConnectionDurableObject({} as any, env as any);
+    await durableObject.webSocketMessage({ deserializeAttachment: () => ({ deviceId: 'dev-1' }), send: vi.fn() } as any, JSON.stringify({
+      type: 'command_status',
+      seq: 99,
+      commandId: 'cmd-status-missing',
+      deviceId: 'dev-1',
+      ts: '2026-04-29T00:00:02.000Z',
+      payload: { state: 'failed', reasonCode: 'PTY_NOT_FOUND', reasonDetail: 'PTY session not found' },
+    }));
+
+    await expect(commands.getCommand('cmd-status-missing')).resolves.toMatchObject({ state: 'failed', reasonCode: 'PTY_NOT_FOUND' });
+    await expect(sessions.get('pty-status-missing')).resolves.toMatchObject({ state: 'failed', failureCode: 'PTY_NOT_FOUND' });
+  });
+
+  it('assigns unique reqSeq values to server SSH start commands', async () => {
+    const env = await createEnv();
+    env.CC_AGENT_DO = new FakeDurableObjectNamespace();
+
+    const firstResponse = await worker.fetch(new Request('https://cc.example.test/v1/devices/dev-1/request-start-server-ssh', {
+      method: 'POST',
+      headers: { authorization: 'Bearer admin-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ serverId: 'srv-1', cols: 120, rows: 32 }),
+    }), env as any);
+    const secondResponse = await worker.fetch(new Request('https://cc.example.test/v1/devices/dev-1/request-start-server-ssh', {
+      method: 'POST',
+      headers: { authorization: 'Bearer admin-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ serverId: 'srv-2', cols: 120, rows: 32 }),
+    }), env as any);
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    const firstEnvelope = await env.CC_AGENT_DO.requests[0].request.json() as any;
+    const secondEnvelope = await env.CC_AGENT_DO.requests[1].request.json() as any;
+    expect(firstEnvelope.seq).not.toBe(secondEnvelope.seq);
+    await expect(firstResponse.json()).resolves.toMatchObject({ reqSeq: firstEnvelope.seq });
+    await expect(secondResponse.json()).resolves.toMatchObject({ reqSeq: secondEnvelope.seq });
+  });
+
+  it('marks server SSH PTY sessions open when the agent acks the start command', async () => {
+    const env = await createEnv();
+    env.CC_AGENT_DO = new FakeDurableObjectNamespace();
+
+    const response = await worker.fetch(new Request('https://cc.example.test/v1/devices/dev-1/request-start-server-ssh', {
+      method: 'POST',
+      headers: { authorization: 'Bearer admin-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ serverId: 'srv-1', cols: 120, rows: 32 }),
+    }), env as any);
+    expect(response.status).toBe(200);
+    const envelope = await env.CC_AGENT_DO.requests[0].request.json() as any;
+
+    const durableObject = new AgentConnectionDurableObject({} as any, env as any);
+    await durableObject.webSocketMessage({ deserializeAttachment: () => ({ deviceId: 'dev-1' }), send: vi.fn() } as any, JSON.stringify({
+      type: 'ack',
+      deviceId: 'dev-1',
+      reqSeq: envelope.seq,
+      ts: '2026-04-29T00:00:02.000Z',
+      payload: { sessionId: envelope.payload.sessionId, localSessionId: 'local-ssh-1' },
+    }));
+
+    await expect(new D1PtySessionStore(env.CC_DB).get(envelope.payload.sessionId)).resolves.toMatchObject({
+      state: 'open',
+      localSessionId: 'local-ssh-1',
+    });
+  });
+
+  it('rejects stale server SSH attach requests before creating a PTY session', async () => {
+    const env = await createEnv();
+    env.CC_AGENT_DO = new FakeDurableObjectNamespace();
+    await new D1LogStore(env.CC_DB).append({
+      id: 'stale-function-status',
+      deviceId: 'dev-1',
+      type: 'function-status',
+      functionId: 'server-ssh-srv-1',
+      sessionId: 'pty-3',
+      seq: 1,
+      ts: '2026-04-28T23:55:00.000Z',
+      payload: { functionId: 'server-ssh-srv-1', state: 'running', sessionId: 'pty-3' },
+    });
+
+    const response = await worker.fetch(new Request('https://cc.example.test/v1/devices/dev-1/request-attach-server-ssh', {
+      method: 'POST',
+      headers: { authorization: 'Bearer admin-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ serverId: 'srv-1', localSessionId: 'pty-3', cols: 120, rows: 32 }),
+    }), env as any);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: 'STALE_SSH_SESSION' });
+    await expect(new D1PtySessionStore(env.CC_DB).listByDevice('dev-1')).resolves.toHaveLength(0);
+    expect(env.CC_AGENT_DO.requests).toHaveLength(0);
+  });
+
+  it('expires volatile PTY sessions and clears tunnel state when agent run id changes', async () => {
+    const env = await createEnv();
+    const logs = new D1LogStore(env.CC_DB);
+    await logs.append({
+      id: 'old-status',
+      deviceId: 'dev-1',
+      type: 'status_snapshot',
+      sessionId: null,
+      functionId: null,
+      seq: 1,
+      ts: '2026-04-29T00:00:00.000Z',
+      payload: {
+        agentRunId: 'run-old',
+        functionStates: [
+          { functionId: 'server-tunnel-srv-1', state: 'running', sessionId: 'tunnel-pty-1', message: 'Tunnel active' },
+          { functionId: 'server-ssh-srv-1', state: 'running', sessionId: 'ssh-pty-1', message: 'SSH active' },
+          { functionId: 'openvpn-connect', state: 'running', sessionId: 'vpn-pty-1', message: 'VPN active' },
+        ],
+      },
+    });
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({ id: 'row-tunnel', sessionId: 'tunnel-pty-1', deviceId: 'dev-1', cols: 120, rows: 32, openedAt: '2026-04-29T00:00:00.000Z' });
+    await sessions.markOpen('tunnel-pty-1', '2026-04-29T00:00:01.000Z');
+
+    const durableObject = new AgentConnectionDurableObject({} as any, env as any);
+    await durableObject.webSocketMessage({ deserializeAttachment: () => ({ deviceId: 'dev-1' }), send: vi.fn() } as any, JSON.stringify({
+      type: 'heartbeat',
+      deviceId: 'dev-1',
+      seq: 2,
+      ts: '2026-04-29T00:00:05.000Z',
+      payload: { agentRunId: 'run-new', uptimeSec: 1 },
+    }));
+
+    await expect(sessions.get('tunnel-pty-1')).resolves.toMatchObject({
+      state: 'expired',
+      failureCode: 'AGENT_RESTARTED',
+    });
+    await expect(logs.getDeviceRuntimeSummary('dev-1')).resolves.toMatchObject({
+      agentRunId: 'run-new',
+      functions: {
+        'server-tunnel-srv-1': { state: 'idle', sessionId: null, message: expect.stringContaining('Agent restarted') },
+        'server-ssh-srv-1': { state: 'idle', sessionId: null, message: expect.stringContaining('Agent restarted') },
+        'openvpn-connect': { state: 'running', sessionId: 'vpn-pty-1' },
+      },
+    });
   });
 
   it('rejects write requests for unattached PTY sessions', async () => {
@@ -449,6 +919,74 @@ describe('Worker admin PTY WebSocket auth', () => {
     } finally {
       vi.stubGlobal('Response', OriginalResponse);
     }
+  });
+
+
+  it('fans out pty-output from DO to admin WS via internal relay endpoint', async () => {
+    const OriginalResponse = globalThis.Response;
+    class TestUpgradeResponse {
+      readonly status: number;
+      readonly webSocket: unknown;
+      constructor(_body: unknown, init: { status?: number; webSocket?: unknown } = {}) {
+        this.status = init.status ?? 200;
+        this.webSocket = init.webSocket;
+      }
+    }
+    vi.stubGlobal('Response', TestUpgradeResponse as any);
+    const listeners = new Map<string, (event: { data?: unknown }) => unknown>();
+    const serverSocket = {
+      accept: vi.fn(),
+      send: vi.fn(),
+      addEventListener: vi.fn((type: string, listener: (event: { data?: unknown }) => unknown) => listeners.set(type, listener)),
+    };
+    vi.stubGlobal('WebSocketPair', vi.fn(function(this: unknown) { return [{ client: true }, serverSocket]; }) as any);
+    const env = await createEnv();
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({ id: 'row-pty-relay', sessionId: 'pty-relay', deviceId: 'dev-1', openedAt: '2026-04-29T00:00:00.000Z' });
+    await sessions.markOpen('pty-relay', '2026-04-29T00:00:01.000Z');
+
+    try {
+      await worker.fetch(wsRequest({ authorization: 'Bearer admin-token' }), env as any);
+      await listeners.get('message')?.({ data: JSON.stringify({ type: 'pty_attach', sessionId: 'pty-relay' }) });
+
+      // Restore original Response so the fanout endpoint returns a proper Response with .json()
+      vi.stubGlobal('Response', OriginalResponse);
+
+      const response = await worker.fetch(new Request('https://cc.internal/internal/pty-fanout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: 'pty-relay',
+          type: 'pty_output',
+          payload: { sessionId: 'pty-relay', deviceId: 'dev-1', data: 'hello from DO relay' },
+        }),
+      }), env as any);
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ ok: true });
+      expect(serverSocket.send).toHaveBeenCalledWith(JSON.stringify({
+        type: 'pty_output',
+        payload: { sessionId: 'pty-relay', deviceId: 'dev-1', data: 'hello from DO relay' },
+      }));
+    } finally {
+      vi.stubGlobal('Response', OriginalResponse);
+    }
+  });
+
+  it('returns delivered zero when no subscribers for session', async () => {
+    const env = await createEnv();
+    const response = await worker.fetch(new Request('https://cc.internal/internal/pty-fanout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: 'no-such-session',
+        type: 'pty_output',
+        payload: { sessionId: 'no-such-session', deviceId: 'dev-1', data: 'no one listening' },
+      }),
+    }), env as any);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true, delivered: 0 });
   });
 
 });

@@ -7,6 +7,7 @@ export const WORKER_ADMIN_API_TOKEN_SCOPES = [
   'logs:read',
   'logs:export',
   'device:record',
+  'audit:read',
 ] as const;
 
 export type WorkerAdminApiTokenScope = (typeof WORKER_ADMIN_API_TOKEN_SCOPES)[number];

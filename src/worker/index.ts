@@ -6,6 +6,8 @@ import { D1PtyAuditStore, D1PtySessionStore } from './db/d1-pty-store';
 import { D1FileTransferStore, D1RemoteBrowserSessionStore } from './db/d1-file-op-store';
 import { D1AdminSessionStore } from './db/d1-admin-session-store';
 import { D1AdminApiTokenStore, WorkerAdminApiTokenScope } from './db/d1-admin-api-token-store';
+import { D1AdminAuditStore } from './db/d1-admin-audit-store';
+import { BoundedSeenIds } from './stream-dedupe';
 
 type WorkerEnv = {
   CC_DB?: unknown;
@@ -19,6 +21,7 @@ type WorkerEnv = {
   sessionTokenFactory?: () => string;
   csrfTokenFactory?: () => string;
   streamPollMs?: number;
+  requestSlowLogMs?: number;
 };
 
 type AdminPrincipal =
@@ -225,12 +228,13 @@ function publicDevice(device: { id: string; name: string; lastSeenAt: string; st
   };
 }
 
-function publicCommand(cmd: { commandId: string; commandType: string; state: string; payloadJson?: string | null; payload?: unknown; submittedAt: string; deviceId: string; actorType: string }) {
+function publicCommand(cmd: { commandId: string; commandType: string; state: string; payloadJson?: string | null; payload?: unknown; submittedAt: string; deviceId: string; actorType: string; reqSeq?: number | null }) {
   return {
     commandId: cmd.commandId,
     commandType: cmd.commandType,
     state: cmd.state,
     payload: cmd.payload !== undefined ? cmd.payload : (cmd.payloadJson ? JSON.parse(cmd.payloadJson) : null),
+    reqSeq: cmd.reqSeq ?? null,
     submittedAt: cmd.submittedAt,
     deviceId: cmd.deviceId,
     actorType: cmd.actorType,
@@ -260,6 +264,33 @@ async function appendAgentTelemetry(db: any, env: WorkerEnv, deviceId: string, e
   });
 }
 
+async function handleAgentRunObservation(db: any, env: WorkerEnv, deviceId: string, payload: Record<string, unknown>, ts: string): Promise<void> {
+  const agentRunId = typeof payload.agentRunId === 'string' && payload.agentRunId.trim() ? payload.agentRunId.trim() : '';
+  if (!agentRunId) return;
+  const result = await new D1LogStore(db).noteAgentRun(deviceId, agentRunId, ts);
+  if (!result.changed) return;
+  const expired = await new D1PtySessionStore(db).expireDeviceSessions(
+    deviceId,
+    ts,
+    'AGENT_RESTARTED',
+    'Agent process restarted; previous in-memory PTY sessions were discarded',
+  );
+  for (const session of expired) {
+    relayPtyToAdminSubscribers(env, session.sessionId, 'pty_error', {
+      sessionId: session.sessionId,
+      deviceId,
+      code: 'AGENT_RESTARTED',
+      message: 'Agent restarted; PTY session no longer exists',
+    });
+  }
+  console.warn('Agent run changed; expired volatile sessions', {
+    deviceId,
+    previousAgentRunId: result.previousAgentRunId,
+    agentRunId,
+    expiredPtySessions: expired.length,
+  });
+}
+
 function sendAgentAck(socket: { send?: (message: string) => void }, reqSeq: unknown) {
   if (typeof reqSeq !== 'number') return;
   socket.send?.(JSON.stringify({ type: 'ack', reqSeq, payload: { status: 'ok' } }));
@@ -275,6 +306,7 @@ async function updateCommandFromAgentResponse(db: any, env: WorkerEnv, deviceId:
   const ts = typeof envelope.ts === 'string' && envelope.ts.trim() ? envelope.ts : new Date(nowMs(env)).toISOString();
   if (type === 'ack') {
     const updated = await commands.markExecuting(command.commandId, ts);
+    await markPtySessionOpenForAgentAck(db, env, deviceId, updated, envelope.payload, ts);
     await commands.appendAuditIfMissing({
       id: makeUuid(env),
       commandId: command.commandId,
@@ -292,6 +324,7 @@ async function updateCommandFromAgentResponse(db: any, env: WorkerEnv, deviceId:
   const reasonCode = typeof payload.error === 'string' && payload.error.trim() ? payload.error.trim() : 'AGENT_NACK';
   const reasonDetail = typeof payload.detail === 'string' ? payload.detail : reasonCode;
   const updated = await commands.markFailed(command.commandId, reasonCode, reasonDetail, ts);
+  await failPtySessionForMissingAgentPty(db, env, deviceId, command, reasonCode, reasonDetail, ts);
   await commands.appendAuditIfMissing({
     id: makeUuid(env),
     commandId: command.commandId,
@@ -303,6 +336,154 @@ async function updateCommandFromAgentResponse(db: any, env: WorkerEnv, deviceId:
     summary: `Agent rejected reqSeq ${reqSeq}: ${reasonCode}`,
     details: { reqSeq, payload: envelope.payload ?? null },
   });
+}
+
+async function markPtySessionOpenForAgentAck(
+  db: any,
+  env: WorkerEnv,
+  deviceId: string,
+  command: { commandId: string; commandType: string; payload?: unknown },
+  ackPayload: unknown,
+  ts: string,
+): Promise<void> {
+  if (!['open_pty', 'start_server_ssh', 'request_attach_server_ssh'].includes(command.commandType)) {
+    return;
+  }
+  const commandPayload = command.payload && typeof command.payload === 'object' ? command.payload as Record<string, unknown> : {};
+  const payload = ackPayload && typeof ackPayload === 'object' ? ackPayload as Record<string, unknown> : {};
+  const sessionId = typeof payload.sessionId === 'string' && payload.sessionId.trim()
+    ? payload.sessionId.trim()
+    : (typeof commandPayload.sessionId === 'string' && commandPayload.sessionId.trim() ? commandPayload.sessionId.trim() : command.commandId);
+  const localSessionId = typeof payload.localSessionId === 'string' && payload.localSessionId.trim()
+    ? payload.localSessionId.trim()
+    : (typeof commandPayload.localSessionId === 'string' && commandPayload.localSessionId.trim() ? commandPayload.localSessionId.trim() : null);
+  const sessions = new D1PtySessionStore(db);
+  const session = await sessions.get(sessionId);
+  if (session && session.deviceId === deviceId && session.state === 'opening') {
+    await sessions.markOpen(sessionId, ts, localSessionId);
+    relayPtyToAdminSubscribers(env, sessionId, 'pty_opened', {
+      sessionId,
+      deviceId,
+      state: 'open',
+      localSessionId,
+    });
+  }
+}
+
+async function failPtySessionForMissingAgentPty(
+  db: any,
+  env: WorkerEnv,
+  deviceId: string,
+  command: { commandId: string; commandType: string; payload?: unknown },
+  reasonCode: string | null,
+  reasonDetail: string | null,
+  ts: string,
+): Promise<void> {
+  if (
+    !['write_pty', 'resize_pty', 'close_pty', 'open_pty', 'start_server_ssh', 'request_attach_server_ssh'].includes(command.commandType)
+    || !['PTY_NOT_FOUND', 'PTY_SESSION_NOT_FOUND'].includes(reasonCode ?? '')
+  ) {
+    return;
+  }
+  const commandPayload = command.payload && typeof command.payload === 'object' ? command.payload as Record<string, unknown> : {};
+  const sessionId = typeof commandPayload.sessionId === 'string' && commandPayload.sessionId.trim()
+    ? commandPayload.sessionId.trim()
+    : command.commandId;
+  const sessions = new D1PtySessionStore(db);
+  const session = await sessions.get(sessionId);
+  if (session && ['opening', 'open', 'closing'].includes(session.state)) {
+    await sessions.markOpenFailed(sessionId, reasonCode ?? 'PTY_NOT_FOUND', reasonDetail, ts);
+    relayPtyToAdminSubscribers(env, sessionId, 'pty_error', {
+      sessionId,
+      deviceId,
+      code: reasonCode ?? 'PTY_NOT_FOUND',
+      message: reasonDetail || 'PTY session not found',
+    });
+  }
+}
+
+async function updateCommandFromAgentStatus(db: any, env: WorkerEnv, deviceId: string, envelope: Record<string, any>) {
+  const payload = envelope.payload && typeof envelope.payload === 'object' ? envelope.payload as Record<string, unknown> : {};
+  const commandId =
+    typeof envelope.commandId === 'string' && envelope.commandId.trim()
+      ? envelope.commandId.trim()
+      : (typeof payload.commandId === 'string' && payload.commandId.trim() ? payload.commandId.trim() : '');
+  if (!commandId) return;
+
+  const commands = new D1CommandStore(db);
+  const command = await commands.getCommand(commandId);
+  if (!command || command.deviceId !== deviceId) return;
+
+  const state = typeof payload.state === 'string' ? payload.state.trim() : '';
+  const outcome = typeof payload.outcome === 'string' && payload.outcome.trim() ? payload.outcome.trim() : null;
+  const reasonCode = typeof payload.reasonCode === 'string' && payload.reasonCode.trim() ? payload.reasonCode.trim() : null;
+  const reasonDetail = typeof payload.reasonDetail === 'string' && payload.reasonDetail.trim() ? payload.reasonDetail.trim() : null;
+  const ts = typeof envelope.ts === 'string' && envelope.ts.trim() ? envelope.ts : new Date(nowMs(env)).toISOString();
+
+  if (state === 'acknowledged') {
+    if (!(await commands.hasAuditEvent(commandId, ['acknowledged', 'executing', 'succeeded', 'failed', 'canceled'], 'agent'))) {
+      await commands.appendAuditIfMissing({
+        id: makeUuid(env),
+        commandId,
+        ts,
+        eventType: 'acknowledged',
+        actorType: command.actorType,
+        actorId: command.actorId,
+        source: 'agent',
+        summary: `Agent acknowledged ${command.commandType}`,
+        details: payload,
+      });
+    }
+    return;
+  }
+
+  if (state === 'executing') {
+    const updated = await commands.markExecuting(commandId, ts);
+    await commands.appendAuditIfMissing({
+      id: makeUuid(env),
+      commandId,
+      ts,
+      eventType: 'executing',
+      actorType: updated.actorType,
+      actorId: updated.actorId,
+      source: 'agent',
+      summary: `Agent started ${updated.commandType}`,
+      details: payload,
+    });
+    return;
+  }
+
+  if (state === 'succeeded') {
+    const updated = await commands.markSucceeded(commandId, outcome, ts);
+    await commands.appendAuditIfMissing({
+      id: makeUuid(env),
+      commandId,
+      ts,
+      eventType: 'succeeded',
+      actorType: updated.actorType,
+      actorId: updated.actorId,
+      source: 'agent',
+      summary: `Agent completed ${updated.commandType}`,
+      details: payload,
+    });
+    return;
+  }
+
+  if (state === 'failed') {
+    const updated = await commands.markFailed(commandId, reasonCode ?? 'COMMAND_FAILED', reasonDetail, ts);
+    await failPtySessionForMissingAgentPty(db, env, deviceId, updated, reasonCode, reasonDetail, ts);
+    await commands.appendAuditIfMissing({
+      id: makeUuid(env),
+      commandId,
+      ts,
+      eventType: 'failed',
+      actorType: updated.actorType,
+      actorId: updated.actorId,
+      source: 'agent',
+      summary: `Agent failed ${updated.commandType}`,
+      details: payload,
+    });
+  }
 }
 
 async function handleAgentSocketMessage(db: any, env: WorkerEnv, deviceId: string, socket: { send?: (message: string) => void }, data: unknown) {
@@ -321,8 +502,16 @@ async function handleAgentSocketMessage(db: any, env: WorkerEnv, deviceId: strin
     return;
   }
 
+  if (type === 'command_status') {
+    await updateCommandFromAgentStatus(db, env, deviceId, envelope);
+    sendAgentAck(socket, envelope.seq);
+    return;
+  }
+
   if (type === 'heartbeat') {
-    await devices.updateDeviceStatus(deviceId, 'connected', typeof envelope.ts === 'string' ? envelope.ts : new Date(nowMs(env)).toISOString());
+    const ts = typeof envelope.ts === 'string' ? envelope.ts : new Date(nowMs(env)).toISOString();
+    await handleAgentRunObservation(db, env, deviceId, payload, ts);
+    await devices.updateDeviceStatus(deviceId, 'connected', ts);
     if (typeof payload.os === 'string' && payload.os.trim()) {
       await devices.updateDeviceOs(deviceId, payload.os.trim());
     }
@@ -349,7 +538,30 @@ async function handleAgentSocketMessage(db: any, env: WorkerEnv, deviceId: strin
       const ts = typeof envelope.ts === 'string' && envelope.ts.trim() ? envelope.ts : new Date(nowMs(env)).toISOString();
       await new D1PtySessionStore(db).noteOutput(sessionId, ts);
       await appendAgentTelemetry(db, env, deviceId, envelope, { type: 'pty-output', sessionId, payload: envelope.payload ?? { data } });
-      fanoutAdminPtyOutput(sessionId, { sessionId, deviceId, data });
+      relayPtyToAdminSubscribers(env, sessionId, 'pty_output', { sessionId, deviceId, data });
+    }
+    sendAgentAck(socket, envelope.seq);
+    return;
+  }
+
+  if (type === 'pty-exit' || type === 'pty_exit') {
+    const sessionId = typeof envelope.sessionId === 'string'
+      ? envelope.sessionId
+      : (typeof payload.sessionId === 'string'
+        ? payload.sessionId
+        : (typeof payload.id === 'string' ? payload.id : ''));
+    if (sessionId) {
+      const ts = typeof envelope.ts === 'string' && envelope.ts.trim() ? envelope.ts : new Date(nowMs(env)).toISOString();
+      const reason = typeof payload.reason === 'string'
+        ? payload.reason
+        : (typeof payload.reasonDetail === 'string' ? payload.reasonDetail : null);
+      const sessions = new D1PtySessionStore(db);
+      const existing = await sessions.get(sessionId);
+      if (existing && ['opening', 'open', 'closing'].includes(existing.state)) {
+        await sessions.markClosed(sessionId, ts, reason);
+      }
+      await appendAgentTelemetry(db, env, deviceId, envelope, { type: 'pty-exit', sessionId, payload: envelope.payload ?? null });
+      relayPtyToAdminSubscribers(env, sessionId, 'pty_exit', { sessionId, deviceId, exitCode: payload.exitCode ?? null, reason });
     }
     sendAgentAck(socket, envelope.seq);
     return;
@@ -406,6 +618,10 @@ async function handleAgentSocketMessage(db: any, env: WorkerEnv, deviceId: strin
   }
 
   if (type === 'status_snapshot' || type === 'inventory') {
+    if (type === 'status_snapshot') {
+      const ts = typeof envelope.ts === 'string' && envelope.ts.trim() ? envelope.ts : new Date(nowMs(env)).toISOString();
+      await handleAgentRunObservation(db, env, deviceId, payload, ts);
+    }
     await appendAgentTelemetry(db, env, deviceId, envelope, { type, payload: envelope.payload ?? null });
     sendAgentAck(socket, envelope.seq);
     return;
@@ -457,16 +673,60 @@ function agentDurableObjectStub(env: WorkerEnv, deviceId: string): { fetch: (req
   return env.CC_AGENT_DO.get(env.CC_AGENT_DO.idFromName(deviceId));
 }
 
+function agentEnvelopeTypeForCommand(commandType: string): string {
+  switch (commandType) {
+    case 'restart_openvpn':
+      return 'request_restart_openvpn';
+    case 'restart_boundary_auth':
+      return 'request_restart_boundary_auth';
+    case 'restart_server_tunnel':
+      return 'request_restart_server_tunnel';
+    case 'restart_server_ssh':
+      return 'request_restart_server_ssh';
+    case 'start_server_ssh':
+      return 'request_start_server_ssh';
+    case 'start_server_tunnel':
+      return 'request_start_server_tunnel';
+    case 'stop_server_tunnel':
+      return 'request_stop_server_tunnel';
+    default:
+      return commandType;
+  }
+}
+
 function makeCommandEnvelope(deviceId: string, command: ReturnType<typeof publicCommand>, now: string) {
+  const seq = typeof command.reqSeq === 'number' && Number.isFinite(command.reqSeq) && command.reqSeq > 0
+    ? command.reqSeq
+    : 1;
   return {
-    type: command.commandType,
+    type: agentEnvelopeTypeForCommand(command.commandType),
     commandType: command.commandType,
     deviceId,
-    seq: 1,
+    seq,
     ts: now,
     commandId: command.commandId,
     payload: command.payload,
   };
+}
+
+function safeWebSocketSend(socket: WebSocket, message: string): boolean {
+  try {
+    socket.send(message);
+    return true;
+  } catch (err) {
+    const reason = String(err).includes('Network connection lost')
+      ? 'network_connection_lost'
+      : 'send_failed';
+    if (reason === 'send_failed') {
+      console.warn('WebSocket send failed:', err);
+    }
+    try {
+      socket.close(1011, reason);
+    } catch {
+      // Ignore close failures for already-lost sockets.
+    }
+    return false;
+  }
 }
 
 async function notifyAgentDurableObject(env: WorkerEnv, deviceId: string, command: ReturnType<typeof publicCommand>, now: string): Promise<void> {
@@ -505,6 +765,16 @@ async function handleAgentWebSocket(request: Request, env: WorkerEnv): Promise<R
   }
 
   return jsonResponse({ error: 'WEBSOCKET_UPGRADE_REQUIRED' }, { status: 426 });
+}
+
+async function handleAgentProtocolProbe(request: Request, env: WorkerEnv): Promise<Response> {
+  if (request.method !== 'GET') return jsonResponse({ error: 'METHOD_NOT_ALLOWED' }, { status: 405 });
+  const auth = await authenticateAgentRequest(request, env);
+  if (auth instanceof Response) return auth;
+  return jsonResponse({
+    protocol: 'scp.cc.v1',
+    transports: ['websocket', 'sse', 'long-poll'],
+  });
 }
 
 async function handleAgentPolling(request: Request, env: WorkerEnv): Promise<Response> {
@@ -616,18 +886,23 @@ async function handleAgentSSE(request: Request, env: WorkerEnv): Promise<Respons
   await devices.updateDeviceStatus(device.id, 'connected', new Date(nowMs(env)).toISOString());
 
   const encoder = new TextEncoder();
+  let keepAlive: any;
   const stream = new ReadableStream({
-    async start(controller) {
+    start(controller) {
       // Send initial connection established event
       controller.enqueue(encoder.encode(`data: ${JSON.stringify({ event: 'connected', deviceId: device.id })}\n\n`));
 
       // Keep-alive ping every 15 seconds
-      const keepAlive = setInterval(() => {
-        controller.enqueue(encoder.encode(`: keep-alive\n\n`));
+      keepAlive = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`: keep-alive\n\n`));
+        } catch {
+          if (keepAlive) clearInterval(keepAlive);
+        }
       }, 15000);
-
-      // Wait for client disconnect
-      await new Promise(() => {});
+    },
+    cancel() {
+      if (keepAlive) clearInterval(keepAlive);
     }
   });
 
@@ -715,10 +990,55 @@ function removeAdminPtySocket(socket: { send?: (message: string) => void }): voi
 }
 
 function fanoutAdminPtyOutput(sessionId: string, payload: { sessionId: string; deviceId: string; data: string }): void {
+  fanoutAdminPtyEvent(sessionId, 'pty_output', payload);
+}
+
+function fanoutAdminPtyEvent(sessionId: string, type: string, payload: Record<string, unknown>): void {
   const subscribers = adminPtySubscribers.get(sessionId);
   if (!subscribers) return;
   for (const subscriber of subscribers) {
-    websocketSend(subscriber, 'pty_output', payload);
+    websocketSend(subscriber, type, payload);
+  }
+}
+
+async function handleInternalPtyFanout(request: Request, env: WorkerEnv): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await parseJsonBody(request);
+  } catch {
+    return jsonResponse({ ok: false, error: 'INVALID_JSON' }, { status: 400 });
+  }
+  const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';
+  const msgType = typeof body.type === 'string' ? body.type : 'pty_output';
+  const payload = body.payload && typeof body.payload === 'object' ? body.payload as Record<string, unknown> : {};
+  const subscribers = adminPtySubscribers.get(sessionId);
+  if (!subscribers?.size) {
+    return jsonResponse({ ok: true, delivered: 0 });
+  }
+  for (const subscriber of subscribers) {
+    websocketSend(subscriber, msgType, payload);
+  }
+  return jsonResponse({ ok: true, delivered: subscribers.size });
+}
+
+async function relayPtyToAdminSubscribers(
+  env: WorkerEnv,
+  sessionId: string,
+  type: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  // Try direct fanout (works in main worker isolate where subscribers map is populated)
+  fanoutAdminPtyEvent(sessionId, type, payload);
+
+  // Also relay via internal endpoint (reaches the main worker from DO isolate)
+  try {
+    await fetch('http://localhost/internal/pty-fanout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, type, payload }),
+    });
+  } catch {
+    // Ignore relay errors ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â the HTTP path is a best-effort bridge from the DO isolate
   }
 }
 
@@ -739,6 +1059,9 @@ async function handleAdminPtyMessage(input: {
     websocketSend(input.socket, 'pty_error', { code: 'INVALID_JSON', message: 'Invalid PTY message JSON' });
     return;
   }
+  if (message.payload && typeof message.payload === 'object') {
+    message = { ...message.payload, ...message };
+  }
 
   if (message.type === 'pty_write' || message.type === 'pty_resize') {
     const sessionId = typeof message.sessionId === 'string' ? message.sessionId.trim() : '';
@@ -756,6 +1079,10 @@ async function handleAdminPtyMessage(input: {
     const actorId = adminActorId(input.principal);
     if (session.attachedActorType !== actorType || (session.attachedActorId ?? null) !== (actorId ?? null)) {
       websocketSend(input.socket, 'pty_error', { code: 'PTY_NOT_ATTACHED', message: 'PTY session is not attached to this admin client' });
+      return;
+    }
+    if (!['opening', 'open'].includes(session.state)) {
+      websocketSend(input.socket, 'pty_error', { code: 'PTY_SESSION_NOT_ACTIVE', message: 'PTY session is not active' });
       return;
     }
     const nowMsValue = nowMs(input.env);
@@ -788,7 +1115,7 @@ async function handleAdminPtyMessage(input: {
         payloadSummary: `Write PTY ${sessionId}`,
         submittedAt: now,
       });
-      command = await commands.markDispatched(command.commandId, 1, now);
+      command = await commands.markDispatched(command.commandId, await commands.nextReqSeq(session.deviceId), now);
       await notifyAgentDurableObject(input.env, session.deviceId, publicCommand(command), now);
       await new D1PtyAuditStore(input.db).append({
         id: makeUuid(input.env),
@@ -820,7 +1147,7 @@ async function handleAdminPtyMessage(input: {
       payloadSummary: `Resize PTY ${sessionId}`,
       submittedAt: now,
     });
-    command = await commands.markDispatched(command.commandId, 1, now);
+    command = await commands.markDispatched(command.commandId, await commands.nextReqSeq(resized.deviceId), now);
     await notifyAgentDurableObject(input.env, resized.deviceId, publicCommand(command), now);
     await new D1PtyAuditStore(input.db).append({
       id: makeUuid(input.env),
@@ -942,7 +1269,8 @@ async function handleAdminPtyMessage(input: {
       payloadSummary: `Close PTY ${sessionId}`,
       submittedAt: now,
     });
-    command = await commands.markDispatched(command.commandId, 1, now);
+    const reqSeq = await commands.nextReqSeq(closing.deviceId);
+    command = await commands.markDispatched(command.commandId, reqSeq, now);
     await notifyAgentDurableObject(input.env, closing.deviceId, publicCommand(command), now);
     await new D1PtyAuditStore(input.db).append({
       id: makeUuid(input.env),
@@ -1018,7 +1346,8 @@ async function handleAdminPtyMessage(input: {
     payloadSummary: `Open PTY ${sessionId}`,
     submittedAt: now,
   });
-  command = await commands.markDispatched(sessionId, 1, now);
+  const reqSeq = await commands.nextReqSeq(deviceId);
+  command = await commands.markDispatched(sessionId, reqSeq, now);
   await commands.appendAudit({
     id: makeUuid(input.env),
     commandId: sessionId,
@@ -1028,7 +1357,7 @@ async function handleAdminPtyMessage(input: {
     actorId,
     source: 'worker',
     summary: `Dispatched open_pty to ${deviceId}`,
-    details: { reqSeq: 1, sessionId, cols, rows },
+    details: { reqSeq, sessionId, cols, rows },
   });
   await notifyAgentDurableObject(input.env, deviceId, publicCommand(command), now);
   websocketSend(input.socket, 'pty_opening', { sessionId, deviceId, cols, rows });
@@ -1083,6 +1412,15 @@ async function dispatchGenericAgentCommand(request: Request, env: WorkerEnv, dev
   if (csrfFailure) return csrfFailure;
   const device = await new D1DeviceStore(auth.db).getDevice(deviceId);
   if (!device) return jsonResponse({ error: 'Device not found' }, { status: 404 });
+  const payload = Object.fromEntries(
+    Object.entries(body).filter(([key]) => key !== 'commandId' && key !== 'csrfToken'),
+  );
+  if (
+    ['start_server_tunnel', 'restart_server_tunnel'].includes(commandType)
+    && (typeof payload.serverId !== 'string' || !payload.serverId.trim())
+  ) {
+    return jsonResponse({ error: 'serverId is required' }, { status: 400 });
+  }
 
   const commandId = typeof body.commandId === 'string' && body.commandId.trim() ? body.commandId.trim() : makeUuid(env);
   const now = new Date(nowMs(env)).toISOString();
@@ -1094,7 +1432,7 @@ async function dispatchGenericAgentCommand(request: Request, env: WorkerEnv, dev
     commandType,
     actorType: getBearerToken(request) ? 'admin_env_token' : 'admin_session',
     actorId: getBearerToken(request) ? 'CC_ADMIN_API_TOKEN' : null,
-    payload: null,
+    payload: Object.keys(payload).length ? payload : null,
     payloadSummary: `Request ${commandType}`,
     submittedAt: now,
   });
@@ -1111,7 +1449,8 @@ async function dispatchGenericAgentCommand(request: Request, env: WorkerEnv, dev
   });
 
   const dispatchedAt = new Date(nowMs(env)).toISOString();
-  command = await commands.markDispatched(commandId, 1, dispatchedAt);
+  const reqSeq = await commands.nextReqSeq(deviceId);
+  command = await commands.markDispatched(commandId, reqSeq, dispatchedAt);
   await commands.appendAudit({
     id: makeUuid(env),
     commandId,
@@ -1121,10 +1460,231 @@ async function dispatchGenericAgentCommand(request: Request, env: WorkerEnv, dev
     actorId: command.actorId,
     source: 'worker',
     summary: `Dispatched ${commandType} to ${deviceId} (durable-object/websocket delivery with polling fallback)`,
-    details: { reqSeq: 1 },
+    details: { reqSeq },
   });
   await notifyAgentDurableObject(env, deviceId, publicCommand(command), dispatchedAt);
-  return jsonResponse({ ok: true, deviceId, reqSeq: 1, requestedAt: dispatchedAt, command });
+  return jsonResponse({ ok: true, deviceId, reqSeq, requestedAt: dispatchedAt, command });
+}
+
+async function handleStartServerSshCommand(request: Request, env: WorkerEnv, deviceId: string): Promise<Response> {
+  const auth = await requireAdminAuth(request, env, ['device:control']);
+  if (auth instanceof Response) return auth;
+  const body = await parseJsonBody(request);
+  const csrfFailure = requireCsrfForCookieMutation(request, env, body);
+  if (csrfFailure) return csrfFailure;
+  const device = await new D1DeviceStore(auth.db).getDevice(deviceId);
+  if (!device) return jsonResponse({ error: 'Device not found' }, { status: 404 });
+  const serverId = typeof body.serverId === 'string' ? body.serverId.trim() : '';
+  if (!serverId) return jsonResponse({ error: 'serverId is required' }, { status: 400 });
+
+  const sessionId = typeof body.sessionId === 'string' && body.sessionId.trim()
+    ? body.sessionId.trim()
+    : `server-ssh-${serverId}-${makeUuid(env)}`;
+  const cols = Math.min(Math.max(Number(body.cols) || 120, 20), 300);
+  const rows = Math.min(Math.max(Number(body.rows) || 32, 5), 120);
+  const now = new Date(nowMs(env)).toISOString();
+  const actorType = adminActorType(auth.principal);
+  const actorId = adminActorId(auth.principal);
+  const ptySessions = new D1PtySessionStore(auth.db);
+  await ptySessions.expireOpeningSessions(now, deviceId);
+  const activeSession = await ptySessions.findActiveServerSshSession(deviceId, serverId);
+  if (activeSession) {
+    return jsonResponse({
+      ok: true,
+      deviceId,
+      serverId,
+      sessionId: activeSession.sessionId,
+      reqSeq: 1,
+      requestedAt: now,
+      agentAck: null,
+      reused: true,
+      command: await new D1CommandStore(auth.db).getCommand(activeSession.sessionId),
+    });
+  }
+
+  await ptySessions.createOpening({
+    id: makeUuid(env),
+    sessionId,
+    deviceId,
+    kind: 'server_ssh',
+    serverId,
+    cols,
+    rows,
+    openedAt: now,
+    openedByActorType: actorType,
+    openedByActorId: actorId,
+    attachedActorType: actorType,
+    attachedActorId: actorId,
+  });
+  await new D1PtyAuditStore(auth.db).append({
+    id: makeUuid(env),
+    sessionId,
+    deviceId,
+    ts: now,
+    eventType: 'pty_open_requested',
+    actorType,
+    actorId,
+    summary: 'Admin requested server SSH PTY open',
+    details: { serverId, cols, rows },
+  });
+
+  const commands = new D1CommandStore(auth.db);
+  let command = await commands.createQueuedCommand({
+    id: makeUuid(env),
+    commandId: sessionId,
+    deviceId,
+    commandType: 'start_server_ssh',
+    actorType,
+    actorId,
+    payload: { serverId, sessionId, cols, rows },
+    payloadSummary: `Start server SSH ${serverId}`,
+    submittedAt: now,
+  });
+  const reqSeq = await commands.nextReqSeq(deviceId);
+  command = await commands.markDispatched(sessionId, reqSeq, now);
+  await commands.appendAudit({
+    id: makeUuid(env),
+    commandId: sessionId,
+    ts: now,
+    eventType: 'dispatched',
+    actorType,
+    actorId,
+    source: 'worker',
+    summary: `Dispatched start_server_ssh to ${deviceId}`,
+    details: { reqSeq, serverId, sessionId, cols, rows },
+  });
+  await notifyAgentDurableObject(env, deviceId, publicCommand(command), now);
+
+  return jsonResponse({
+    ok: true,
+    deviceId,
+    serverId,
+    sessionId,
+    reqSeq,
+    requestedAt: now,
+    agentAck: null,
+    command,
+  });
+}
+
+async function handleAttachServerSshCommand(request: Request, env: WorkerEnv, deviceId: string): Promise<Response> {
+  const auth = await requireAdminAuth(request, env, ['device:control']);
+  if (auth instanceof Response) return auth;
+  const body = await parseJsonBody(request);
+  const csrfFailure = requireCsrfForCookieMutation(request, env, body);
+  if (csrfFailure) return csrfFailure;
+  const device = await new D1DeviceStore(auth.db).getDevice(deviceId);
+  if (!device) return jsonResponse({ error: 'Device not found' }, { status: 404 });
+  const serverId = typeof body.serverId === 'string' ? body.serverId.trim() : '';
+  if (!serverId) return jsonResponse({ error: 'serverId is required' }, { status: 400 });
+  const localSessionId = typeof body.localSessionId === 'string' ? body.localSessionId.trim() : '';
+  if (!localSessionId) return jsonResponse({ error: 'localSessionId is required' }, { status: 400 });
+
+  const sessionId = typeof body.sessionId === 'string' && body.sessionId.trim()
+    ? body.sessionId.trim()
+    : `server-ssh-${serverId}-${makeUuid(env)}`;
+  const cols = Math.min(Math.max(Number(body.cols) || 120, 20), 300);
+  const rows = Math.min(Math.max(Number(body.rows) || 32, 5), 120);
+  const now = new Date(nowMs(env)).toISOString();
+  const runtimeSummary = await new D1LogStore(auth.db).getDeviceRuntimeSummary(deviceId);
+  const sshStatus = runtimeSummary.functions?.[`server-ssh-${serverId}`];
+  const observedAtMs = typeof sshStatus?.observedAt === 'string' ? Date.parse(sshStatus.observedAt) : NaN;
+  const state = typeof sshStatus?.state === 'string' ? sshStatus.state.trim().toLowerCase() : '';
+  const statusSessionId = typeof sshStatus?.sessionId === 'string' ? sshStatus.sessionId.trim() : '';
+  if (
+    !['starting', 'running'].includes(state)
+    || statusSessionId !== localSessionId
+    || !Number.isFinite(observedAtMs)
+    || Date.parse(now) - observedAtMs > 120_000
+  ) {
+    return jsonResponse({
+      error: 'STALE_SSH_SESSION',
+      message: 'Local SSH PTY session is not confirmed active by a recent device status update',
+    }, { status: 409 });
+  }
+  const actorType = adminActorType(auth.principal);
+  const actorId = adminActorId(auth.principal);
+  const ptySessions = new D1PtySessionStore(auth.db);
+  await ptySessions.expireOpeningSessions(now, deviceId);
+  const activeSession = await ptySessions.findActiveServerSshSession(deviceId, serverId);
+  if (activeSession) {
+    return jsonResponse({
+      ok: true,
+      deviceId,
+      serverId,
+      sessionId: activeSession.sessionId,
+      reqSeq: 1,
+      requestedAt: now,
+      agentAck: null,
+      reused: true,
+      command: await new D1CommandStore(auth.db).getCommand(activeSession.sessionId),
+    });
+  }
+
+  await ptySessions.createOpening({
+    id: makeUuid(env),
+    sessionId,
+    deviceId,
+    kind: 'server_ssh',
+    serverId,
+    localSessionId,
+    cols,
+    rows,
+    openedAt: now,
+    openedByActorType: actorType,
+    openedByActorId: actorId,
+    attachedActorType: actorType,
+    attachedActorId: actorId,
+  });
+  await new D1PtyAuditStore(auth.db).append({
+    id: makeUuid(env),
+    sessionId,
+    deviceId,
+    ts: now,
+    eventType: 'pty_attach_requested',
+    actorType,
+    actorId,
+    summary: 'Admin requested server SSH PTY attach',
+    details: { serverId, sessionId, localSessionId, cols, rows },
+  });
+
+  const commands = new D1CommandStore(auth.db);
+  let command = await commands.createQueuedCommand({
+    id: makeUuid(env),
+    commandId: sessionId,
+    deviceId,
+    commandType: 'request_attach_server_ssh',
+    actorType,
+    actorId,
+    payload: { serverId, sessionId, localSessionId, cols, rows },
+    payloadSummary: `Attach server SSH ${serverId}`,
+    submittedAt: now,
+  });
+  const reqSeq = await commands.nextReqSeq(deviceId);
+  command = await commands.markDispatched(sessionId, reqSeq, now);
+  await commands.appendAudit({
+    id: makeUuid(env),
+    commandId: sessionId,
+    ts: now,
+    eventType: 'dispatched',
+    actorType,
+    actorId,
+    source: 'worker',
+    summary: `Dispatched request_attach_server_ssh to ${deviceId}`,
+    details: { reqSeq, serverId, sessionId, localSessionId, cols, rows },
+  });
+  await notifyAgentDurableObject(env, deviceId, publicCommand(command), now);
+
+  return jsonResponse({
+    ok: true,
+    deviceId,
+    serverId,
+    sessionId,
+    reqSeq,
+    requestedAt: now,
+    agentAck: null,
+    command,
+  });
 }
 
 async function handleListDevices(request: Request, env: WorkerEnv): Promise<Response> {
@@ -1172,6 +1732,7 @@ function resolveLogFilter(url: URL): WorkerTelemetryFilter {
 }
 
 function clampNumber(raw: string | null, fallback: number, min: number, max: number): number {
+  if (raw === null || raw.trim() === '') return fallback;
   const value = Number(raw);
   if (!Number.isFinite(value)) return fallback;
   return Math.min(Math.max(value, min), max);
@@ -1273,6 +1834,58 @@ async function handleListCommands(request: Request, env: WorkerEnv, url: URL): P
   return jsonResponse({ items: commands });
 }
 
+async function handleListPtySessions(request: Request, env: WorkerEnv, deviceId: string, url: URL): Promise<Response> {
+  const required = await requireAdminAndDevice(request, env, deviceId, ['device:read']);
+  if (required instanceof Response) return required;
+  const limit = clampNumber(url.searchParams.get('limit'), 50, 1, 500);
+  const ptyStore = new D1PtySessionStore(required.db);
+  const now = new Date(nowMs(env)).toISOString();
+  await ptyStore.expireOpeningSessions(now, required.deviceId);
+  const sessions = (await ptyStore.listByDevice(required.deviceId, limit))
+    .filter((session) => !(session.state === 'failed' && ['PTY_NOT_FOUND', 'PTY_SESSION_NOT_FOUND'].includes(session.failureCode ?? '')))
+    .filter((session) => !(session.state === 'expired' && session.failureCode === 'PTY_OPEN_TIMEOUT'));
+  const commands = new D1CommandStore(required.db);
+  const items = await Promise.all(sessions.map(async (session) => {
+    const command = await commands.getCommand(session.sessionId);
+    const payload = command?.payload && typeof command.payload === 'object' ? command.payload as Record<string, unknown> : {};
+    const serverId = ['start_server_ssh', 'request_attach_server_ssh'].includes(command?.commandType ?? '') && typeof payload.serverId === 'string' && payload.serverId.trim()
+      ? payload.serverId.trim()
+      : null;
+    return serverId ? { ...session, serverId } : session;
+  }));
+  return jsonResponse({ items });
+}
+
+async function handleTunnelLogs(request: Request, env: WorkerEnv, deviceId: string, serverId: string, url: URL): Promise<Response> {
+  const required = await requireAdminAndDevice(request, env, deviceId, ['logs:read']);
+  if (required instanceof Response) return required;
+  const resolvedServerId = serverId.trim();
+  if (!resolvedServerId) return jsonResponse({ error: 'serverId is required' }, { status: 400 });
+
+  const store = new D1LogStore(required.db);
+  const limit = clampNumber(url.searchParams.get('limit'), 200, 1, 5000);
+  const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
+  const functionId = `server-tunnel-${resolvedServerId}`;
+  const sessionId = await store.getLastSessionIdForFunction(required.deviceId, functionId);
+  if (!sessionId) {
+    return jsonResponse({ entries: [], total: 0 });
+  }
+
+  const logs = await store.listPtyOutputBySession(required.deviceId, sessionId, limit, offset);
+  const total = await store.countPtyOutputBySession(required.deviceId, sessionId);
+  return jsonResponse({
+    entries: logs.map((entry) => {
+      const payload = entry.payload && typeof entry.payload === 'object' ? entry.payload as Record<string, unknown> : {};
+      return {
+        ts: entry.ts,
+        sessionId: entry.sessionId ?? null,
+        data: typeof payload.data === 'string' ? payload.data : '',
+      };
+    }),
+    total,
+  });
+}
+
 async function handleDevicesStream(request: Request, env: WorkerEnv): Promise<Response> {
   const auth = await requireAdminAuth(request, env, ['device:read']);
   if (auth instanceof Response) return auth;
@@ -1283,7 +1896,7 @@ async function handleDevicesStream(request: Request, env: WorkerEnv): Promise<Re
     device.status === 'connected' ? 'device-connected' : 'device-disconnected',
     publicDevice(device),
   );
-  return sseStreamResponse(devices.map(frameFor), {
+  return sseStreamResponse([], {
     intervalMs: streamPollMs(env),
     next: async () => {
       const current = await store.getAllDevices();
@@ -1307,13 +1920,14 @@ async function handleTelemetryStream(request: Request, env: WorkerEnv, url: URL)
   const limit = clampNumber(url.searchParams.get('limit'), 100, 1, 500);
   const filter = resolveLogFilter(url);
   const events = await store.listByDevice(required.deviceId, limit, filter);
-  const seen = new Set(events.map((event) => event.id));
-  return sseStreamResponse(events.map((event) => sseFrame('telemetry', event)), {
+  const seen = new BoundedSeenIds(limit);
+  seen.rememberFresh(events.map((event) => event.id));
+  return sseStreamResponse([], {
     intervalMs: streamPollMs(env),
     next: async () => {
       const current = await store.listByDevice(required.deviceId, limit, filter);
-      const fresh = current.filter((event) => !seen.has(event.id));
-      fresh.forEach((event) => seen.add(event.id));
+      const freshIds = new Set(seen.rememberFresh(current.map((event) => event.id)));
+      const fresh = current.filter((event) => freshIds.has(event.id));
       return fresh.map((event) => sseFrame('telemetry', event));
     },
   });
@@ -1325,18 +1939,19 @@ async function handleCommandsStream(request: Request, env: WorkerEnv, url: URL):
   const store = new D1CommandStore(required.db);
   const limit = clampNumber(url.searchParams.get('limit'), 100, 1, 500);
   const commands = await store.listCommands({ deviceId: required.deviceId, limit });
-  const seen = new Map(commands.map((command) => [command.commandId, JSON.stringify(command)]));
-  const frames = [...commands].reverse().map((command) => sseFrame('command', command));
-  return sseStreamResponse(frames, {
+  let seen = new Map(commands.map((command) => [command.commandId, JSON.stringify(command)]));
+  return sseStreamResponse([], {
     intervalMs: streamPollMs(env),
     next: async () => {
       const current = await store.listCommands({ deviceId: required.deviceId, limit });
+      const nextSeen = new Map<string, string>();
       const changed = current.filter((command) => {
         const serialized = JSON.stringify(command);
+        nextSeen.set(command.commandId, serialized);
         if (seen.get(command.commandId) === serialized) return false;
-        seen.set(command.commandId, serialized);
         return true;
       });
+      seen = nextSeen;
       return changed.reverse().map((command) => sseFrame('command', command));
     },
   });
@@ -1348,18 +1963,19 @@ async function handleTransfersStream(request: Request, env: WorkerEnv, url: URL)
   const store = new D1FileTransferStore(required.db);
   const limit = clampNumber(url.searchParams.get('limit'), 100, 1, 500);
   const transfers = await store.listByDevice(required.deviceId, limit);
-  const seen = new Map(transfers.map((transfer) => [transfer.transferId, JSON.stringify(transfer)]));
-  const frames = [...transfers].reverse().map((transfer) => sseFrame('file_transfer', transfer));
-  return sseStreamResponse(frames, {
+  let seen = new Map(transfers.map((transfer) => [transfer.transferId, JSON.stringify(transfer)]));
+  return sseStreamResponse([], {
     intervalMs: streamPollMs(env),
     next: async () => {
       const current = await store.listByDevice(required.deviceId, limit);
+      const nextSeen = new Map<string, string>();
       const changed = current.filter((transfer) => {
         const serialized = JSON.stringify(transfer);
+        nextSeen.set(transfer.transferId, serialized);
         if (seen.get(transfer.transferId) === serialized) return false;
-        seen.set(transfer.transferId, serialized);
         return true;
       });
+      seen = nextSeen;
       return changed.reverse().map((transfer) => sseFrame('file_transfer', transfer));
     },
   });
@@ -1458,7 +2074,8 @@ async function handleStopFileTransfer(request: Request, env: WorkerEnv): Promise
     payloadSummary: `Stop file transfer ${required.transferId}`,
     submittedAt: now,
   });
-  command = await commands.markDispatched(command.commandId, 1, now);
+  const reqSeq = await commands.nextReqSeq(required.deviceId);
+  command = await commands.markDispatched(command.commandId, reqSeq, now);
   const transfer = await required.store.markState(required.transferId, 'canceled', now, { message: 'Stop requested by admin' });
   await notifyAgentDurableObject(env, required.deviceId, publicCommand(command), now);
   return jsonResponse({ ok: true, transferId: required.transferId, state: transfer.state, command });
@@ -1504,7 +2121,8 @@ async function handleOpenRemoteBrowser(request: Request, env: WorkerEnv): Promis
     payloadSummary: `Open remote browser ${browserId}`,
     submittedAt: now,
   });
-  command = await commands.markDispatched(commandId, 1, now);
+  const reqSeq = await commands.nextReqSeq(required.deviceId);
+  command = await commands.markDispatched(commandId, reqSeq, now);
   await notifyAgentDurableObject(env, required.deviceId, publicCommand(command), now);
   return jsonResponse({
     browserId: browser.browserSessionId,
@@ -1554,7 +2172,8 @@ async function handleRemoteBrowserCommand(request: Request, env: WorkerEnv, rout
     payloadSummary: `${config.commandType} ${browserId}`,
     submittedAt: now,
   });
-  command = await commands.markDispatched(command.commandId, 1, now);
+  const reqSeq = await commands.nextReqSeq(required.deviceId);
+  command = await commands.markDispatched(command.commandId, reqSeq, now);
   await notifyAgentDurableObject(env, required.deviceId, publicCommand(command), now);
   const browser = config.closes
     ? await store.markClosed(browserId, now, 'Admin closed remote browser session')
@@ -1605,10 +2224,116 @@ async function handleStartScpTransfer(request: Request, env: WorkerEnv, directio
     payloadSummary: `${commandType} ${transferId}`,
     submittedAt: now,
   });
-  command = await commands.markDispatched(commandId, 1, now);
-  const updated = await new D1FileTransferStore(required.db).attachCommand(transferId, commandId, 1, now);
+  const reqSeq = await commands.nextReqSeq(required.deviceId);
+  command = await commands.markDispatched(commandId, reqSeq, now);
+  const updated = await new D1FileTransferStore(required.db).attachCommand(transferId, commandId, reqSeq, now);
   await notifyAgentDurableObject(env, required.deviceId, publicCommand(command), now);
   return jsonResponse(updated ?? transfer);
+}
+
+type LogIngestBody = {
+  events?: Array<Partial<{ type: string; sessionId: string | null; functionId: string | null; seq: number; ts: string; payload: unknown }>>;
+} & Partial<{ type: string; sessionId: string | null; functionId: string | null; seq: number; ts: string; payload: unknown }>;
+
+function normalizeIngestEvents(body: LogIngestBody): Array<Partial<{ type: string; sessionId: string | null; functionId: string | null; seq: number; ts: string; payload: unknown }>> {
+  if (Array.isArray(body.events)) return body.events;
+  if (body.type) return [body];
+  return [];
+}
+
+async function decompressGzipBody(request: Request): Promise<string> {
+  const encoding = request.headers.get('content-encoding')?.toLowerCase();
+  if (encoding !== 'gzip') {
+    return request.text();
+  }
+  const raw = await request.arrayBuffer();
+  if (typeof DecompressionStream === 'undefined') {
+    // Fallback: try to parse as plain text (Cloudflare Workers auto-decompress in some cases)
+    return new TextDecoder().decode(raw);
+  }
+  const ds = new DecompressionStream('gzip');
+  const writer = ds.writable.getWriter();
+  writer.write(new Uint8Array(raw));
+  writer.close();
+  const reader = ds.readable.getReader();
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return new TextDecoder().decode(result);
+}
+
+async function handleIngestLogs(request: Request, env: WorkerEnv): Promise<Response> {
+  // Authenticate as agent (bearer token)
+  const auth = await authenticateAgentRequest(request, env);
+  if (auth instanceof Response) return auth;
+
+  // Rate limiting
+  const now = typeof env.now === 'function' ? env.now : () => Date.now();
+  const rateLimits = new D1RateLimitStore(auth.db, { now });
+  await rateLimits.initialize();
+  const clientId = getClientId(request);
+  const limit = await rateLimits.checkDetailed(`ingest:${auth.device.id}:${clientId}`, 600, 60 * 1000);
+  if (limit.ok === false) {
+    const retryAfterMs = limit.retryAfterMs;
+    return jsonResponse(
+      { type: 'nack', payload: { code: 'rate_limited', rate_limited: true, retryAfterMs } },
+      {
+        status: 429,
+        headers: { 'retry-after': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) },
+      },
+    );
+  }
+
+  // Parse body (with optional gzip decompression)
+  let body: LogIngestBody;
+  try {
+    const text = await decompressGzipBody(request);
+    const parsed = JSON.parse(text);
+    body = parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    body = {};
+  }
+
+  const incoming = normalizeIngestEvents(body);
+  if (!incoming.length) {
+    return jsonResponse({ error: 'events payload is required' }, { status: 400 });
+  }
+
+  const nowIso = new Date(now()).toISOString();
+  const logStore = new D1LogStore(auth.db);
+  let lastSeq: number | null = null;
+
+  for (let i = 0; i < incoming.length; i++) {
+    const event = incoming[i];
+    const seq = typeof event.seq === 'number' ? event.seq : now() + i;
+    await logStore.append({
+      id: makeUuid(env),
+      deviceId: auth.device.id,
+      type: event.type ?? 'unknown',
+      sessionId: event.sessionId ?? null,
+      functionId: event.functionId ?? null,
+      seq,
+      ts: event.ts || nowIso,
+      payload: event.payload ?? null,
+    });
+    lastSeq = seq;
+  }
+
+  return jsonResponse({
+    accepted: incoming.length,
+    deviceId: auth.device.id,
+    lastSeq,
+  });
 }
 
 async function handleListLogs(request: Request, env: WorkerEnv, url: URL): Promise<Response> {
@@ -1743,6 +2468,7 @@ async function handleCreateApiToken(request: Request, env: WorkerEnv): Promise<R
     scopes: rawScopes as WorkerAdminApiTokenScope[],
     ttlDays: Number(required.body.ttlDays),
   });
+  await new D1AdminAuditStore(required.db).log('TOKEN_CREATE', 'admin', { label: token.label, tokenId: token.tokenId }, nowMs(env));
   return jsonResponse(formatAdminApiToken(token));
 }
 
@@ -1751,6 +2477,7 @@ async function handleRevokeApiToken(request: Request, env: WorkerEnv, tokenId: s
   if (required instanceof Response) return required;
   const revoked = await new D1AdminApiTokenStore(required.db, { now: () => nowMs(env) }).revokeToken(tokenId);
   if (!revoked) return jsonResponse({ error: 'Token not found' }, { status: 404 });
+  await new D1AdminAuditStore(required.db).log('TOKEN_REVOKE', 'admin', { label: revoked.label, tokenId: revoked.tokenId }, nowMs(env));
   return jsonResponse({ tokenId: revoked.tokenId, revokedAt: revoked.revokedAt ? new Date(revoked.revokedAt).toISOString() : null });
 }
 
@@ -1805,13 +2532,30 @@ async function handleAdminLogin(request: Request, env: WorkerEnv): Promise<Respo
   if (db instanceof Response) return db;
   const body = await parseRequestFields(request);
   const password = typeof body.password === 'string' ? body.password : '';
+  const next = typeof body.next === 'string' ? body.next : new URL(request.url).searchParams.get('next') || '/';
+
+  const isJson = (request.headers.get('accept') || '').includes('application/json') || (request.headers.get('content-type') || '').includes('application/json');
+
+  const audit = new D1AdminAuditStore(db);
+  const ip = getClientId(request);
+  const userAgent = request.headers.get('user-agent') ?? undefined;
+
   if (!env.CC_ADMIN_PASSWORD || password !== env.CC_ADMIN_PASSWORD) {
-    return jsonResponse({ error: 'Invalid password' }, { status: 401 });
+    await audit.log('LOGIN_FAILED', 'admin', { ip, userAgent }, nowMs(env));
+    if (isJson) {
+      return jsonResponse({ error: 'Invalid password' }, { status: 401 });
+    }
+    const redirectUrl = new URL('/admin/login', request.url);
+    redirectUrl.searchParams.set('error', '1');
+    if (next && next !== '/') redirectUrl.searchParams.set('next', next);
+    return redirectResponse(redirectUrl.toString());
   }
 
+  await audit.log('LOGIN_SUCCESS', 'admin', { ip, userAgent }, nowMs(env));
+
   const session = await adminSessionStore(db, env).createSession({
-    ip: getClientId(request),
-    userAgent: request.headers.get('user-agent') ?? undefined,
+    ip,
+    userAgent,
   });
   const headers = new Headers();
   appendCookie(headers, ADMIN_SESSION_COOKIE, session, {
@@ -1825,7 +2569,12 @@ async function handleAdminLogin(request: Request, env: WorkerEnv): Promise<Respo
     secure: new URL(request.url).protocol === 'https:',
     maxAge: 12 * 60 * 60,
   });
-  return redirectResponse('/', { headers });
+
+  if (isJson) {
+    return jsonResponse({ ok: true, next }, { headers });
+  }
+
+  return redirectResponse(next, { headers });
 }
 
 async function handleAdminLogout(request: Request, env: WorkerEnv): Promise<Response> {
@@ -1835,6 +2584,9 @@ async function handleAdminLogout(request: Request, env: WorkerEnv): Promise<Resp
   const csrfFailure = requireCsrfForCookieMutation(request, env, body);
   if (csrfFailure) return csrfFailure;
   const sessionToken = parseCookies(request.headers.get('cookie'))[ADMIN_SESSION_COOKIE];
+  
+  await new D1AdminAuditStore(db).log('LOGOUT', 'admin', { ip: getClientId(request) }, nowMs(env));
+
   await adminSessionStore(db, env).clear(sessionToken);
   const headers = new Headers();
   appendCookie(headers, ADMIN_SESSION_COOKIE, '', { httpOnly: true, sameSite: 'Strict', maxAge: 0 });
@@ -1855,15 +2607,37 @@ async function handleListAdminSessions(request: Request, env: WorkerEnv): Promis
   })));
 }
 
+async function handleListAdminAudit(request: Request, env: WorkerEnv, url: URL): Promise<Response> {
+  const auth = await requireAdminAuth(request, env, ['audit:read']);
+  if (auth instanceof Response) return auth;
+  const limit = clampNumber(url.searchParams.get('limit'), 100, 1, 1000);
+  const event = url.searchParams.get('event')?.trim() || undefined;
+  const actor = url.searchParams.get('actor')?.trim() || undefined;
+  const logs = await new D1AdminAuditStore(auth.db).list({ limit, event, actor });
+  return jsonResponse(logs);
+}
+
 async function fetch(request: Request, env: WorkerEnv = {}, _ctx?: WorkerExecutionContext): Promise<Response> {
   const url = new URL(request.url);
 
 
+  if (request.method === 'POST' && url.pathname === '/internal/pty-fanout') {
+    return handleInternalPtyFanout(request, env);
+  }
 
+
+
+
+  if (url.pathname === '/agent/protocol') {
+    return handleAgentProtocolProbe(request, env);
+  }
 
   if (url.pathname === '/agent') {
     // WebSocket upgrades must be handled before GET long-poll fallback.
     if ((request.headers.get('upgrade') || '').toLowerCase() === 'websocket') {
+      return handleAgentWebSocket(request, env);
+    }
+    if (request.headers.get('accept')?.includes('text/event-stream')) {
       return handleAgentWebSocket(request, env);
     }
     // Long-polling GET remains as a compatibility fallback for older agents.
@@ -1916,6 +2690,9 @@ async function fetch(request: Request, env: WorkerEnv = {}, _ctx?: WorkerExecuti
   }
   if (request.method === 'GET' && url.pathname === '/admin/sessions') {
     return handleListAdminSessions(request, env);
+  }
+  if (request.method === 'GET' && url.pathname === '/admin/audit-log') {
+    return handleListAdminAudit(request, env, url);
   }
 
   if (request.method === 'GET' && url.pathname === '/v1/health') {
@@ -1978,6 +2755,9 @@ async function fetch(request: Request, env: WorkerEnv = {}, _ctx?: WorkerExecuti
   if (request.method === 'GET' && url.pathname === '/v1/logs/stream') {
     return handleTelemetryStream(request, env, url);
   }
+  if (request.method === 'POST' && url.pathname === '/v1/logs') {
+    return handleIngestLogs(request, env);
+  }
   if (request.method === 'GET' && url.pathname === '/v1/logs') {
     return handleListLogs(request, env, url);
   }
@@ -1994,13 +2774,31 @@ async function fetch(request: Request, env: WorkerEnv = {}, _ctx?: WorkerExecuti
     return handleTelemetry(request, env, url);
   }
 
+  const ptySessionsMatch = url.pathname.match(/^\/v1\/devices\/([^/]+)\/pty-sessions$/);
+  if (ptySessionsMatch && request.method === 'GET') {
+    return handleListPtySessions(request, env, decodeURIComponent(ptySessionsMatch[1]), url);
+  }
+  const tunnelLogsMatch = url.pathname.match(/^\/v1\/devices\/([^/]+)\/tunnels\/([^/]+)\/logs$/);
+  if (tunnelLogsMatch && request.method === 'GET') {
+    return handleTunnelLogs(
+      request,
+      env,
+      decodeURIComponent(tunnelLogsMatch[1]),
+      decodeURIComponent(tunnelLogsMatch[2]),
+      url,
+    );
+  }
 
-  const genericDeviceCommandMatch = url.pathname.match(/^\/v1\/devices\/([^/]+)\/(request-status-snapshot|request-inventory|request-recent-logs)$/);
+
+  const genericDeviceCommandMatch = url.pathname.match(/^\/v1\/devices\/([^/]+)\/(request-status-snapshot|request-inventory|request-recent-logs|request-restart-boundary-auth|request-start-server-tunnel|request-restart-server-tunnel)$/);
   if (genericDeviceCommandMatch && request.method === 'POST') {
     const commandTypeByPath: Record<string, string> = {
       'request-status-snapshot': 'request_status_snapshot',
       'request-inventory': 'request_inventory',
       'request-recent-logs': 'request_recent_logs',
+      'request-restart-boundary-auth': 'restart_boundary_auth',
+      'request-start-server-tunnel': 'start_server_tunnel',
+      'request-restart-server-tunnel': 'restart_server_tunnel',
     };
     return dispatchGenericAgentCommand(request, env, decodeURIComponent(genericDeviceCommandMatch[1]), commandTypeByPath[genericDeviceCommandMatch[2]]);
   }
@@ -2020,6 +2818,15 @@ async function fetch(request: Request, env: WorkerEnv = {}, _ctx?: WorkerExecuti
     return handleDeleteDevice(request, env, decodeURIComponent(deviceMatch[1]));
   }
 
+  const startServerSshMatch = url.pathname.match(/^\/v1\/devices\/([^/]+)\/request-start-server-ssh$/);
+  if (startServerSshMatch && request.method === 'POST') {
+    return handleStartServerSshCommand(request, env, decodeURIComponent(startServerSshMatch[1]));
+  }
+  const attachServerSshMatch = url.pathname.match(/^\/v1\/devices\/([^/]+)\/request-attach-server-ssh$/);
+  if (attachServerSshMatch && request.method === 'POST') {
+    return handleAttachServerSshCommand(request, env, decodeURIComponent(attachServerSshMatch[1]));
+  }
+
   if (request.method === 'POST' && url.pathname === '/v1/revoke') {
     return handleRevokeDevice(request, env);
   }
@@ -2031,12 +2838,52 @@ async function fetch(request: Request, env: WorkerEnv = {}, _ctx?: WorkerExecuti
   return jsonResponse({ error: 'not_found' }, { status: 404 });
 }
 
-async function safeFetch(request: Request, env: WorkerEnv, ctx?: WorkerExecutionContext): Promise<Response> {
+async function safeFetch(request: Request, env: WorkerEnv = {}, ctx?: WorkerExecutionContext): Promise<Response> {
+  const startedAt = Date.now();
+  const url = new URL(request.url);
+  const requestId = request.headers.get('x-request-id')
+    || request.headers.get('cf-ray')
+    || `req-${startedAt.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const baseLog = {
+    requestId,
+    method: request.method,
+    path: url.pathname,
+  };
+  const slowLogMs = Math.max(100, Number(env.requestSlowLogMs) || 5000);
+  const slowTimer = setTimeout(() => {
+    console.warn('Worker request still running', {
+      ...baseLog,
+      elapsedMs: Date.now() - startedAt,
+      query: url.search || undefined,
+    });
+  }, slowLogMs);
+
+  console.info('Worker request started', baseLog);
   try {
-    return await fetch(request, env, ctx);
+    const response = await fetch(request, env, ctx);
+    try {
+      response.headers.set('x-request-id', requestId);
+    } catch {
+      // Some runtime-created upgrade responses may have immutable headers.
+    }
+    console.info('Worker request completed', {
+      ...baseLog,
+      status: response.status,
+      elapsedMs: Date.now() - startedAt,
+    });
+    return response;
   } catch (err) {
-    console.error('Fetch handler error:', err);
-    return jsonResponse({ error: 'INTERNAL_ERROR', details: String(err) }, { status: 500 });
+    console.error('Worker request failed', {
+      ...baseLog,
+      elapsedMs: Date.now() - startedAt,
+      error: String(err),
+    });
+    return jsonResponse(
+      { error: 'INTERNAL_ERROR', details: String(err), requestId },
+      { status: 500, headers: { 'x-request-id': requestId } },
+    );
+  } finally {
+    clearTimeout(slowTimer);
   }
 }
 
@@ -2045,6 +2892,15 @@ export class AgentConnectionDurableObject {
   constructor(private readonly state: DurableObjectStateLike, private readonly env: WorkerEnv) {}
 
   async fetch(request: Request): Promise<Response> {
+    try {
+      return await this._fetch(request);
+    } catch (err) {
+      console.error('Agent Durable Object fetch error:', err);
+      return jsonResponse({ error: 'INTERNAL_ERROR', details: String(err) }, { status: 500 });
+    }
+  }
+
+  private async _fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === 'POST' && url.pathname === '/dispatch') {
       const envelope = await parseJsonBody(request);
@@ -2052,11 +2908,8 @@ export class AgentConnectionDurableObject {
       const message = JSON.stringify(envelope);
       let delivered = 0;
       for (const socket of sockets) {
-        try {
-          socket.send(message);
+        if (safeWebSocketSend(socket, message)) {
           delivered += 1;
-        } catch (err) {
-          console.error('Durable Object command send failed:', err);
         }
       }
       return jsonResponse({ delivered, sockets: sockets.length });
@@ -2085,32 +2938,63 @@ export class AgentConnectionDurableObject {
     }
 
     await new D1DeviceStore(auth.db).updateDeviceStatus(auth.device.id, 'connected', new Date(nowMs(this.env)).toISOString());
-    server.send(JSON.stringify({ type: 'welcome', payload: { deviceId: auth.device.id, protocol: 'scp.cc.v1', transport: 'durable-object-websocket' } }));
+    safeWebSocketSend(server, JSON.stringify({ type: 'welcome', payload: { deviceId: auth.device.id, protocol: 'scp.cc.v1', transport: 'durable-object-websocket' } }));
     const wsHeaders = applySecurityHeaders(new Headers());
     return new Response(null, { status: 101, headers: wsHeaders, webSocket: client } as ResponseInit & { webSocket: WebSocket });
   }
 
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    const text = typeof message === 'string' ? message : new TextDecoder().decode(message);
-    let envelope: Record<string, any> = {};
     try {
-      envelope = JSON.parse(text || '{}');
-    } catch {
-      return;
+      const text = typeof message === 'string' ? message : new TextDecoder().decode(message);
+      let envelope: Record<string, any> = {};
+      try {
+        envelope = JSON.parse(text || '{}');
+      } catch {
+        return;
+      }
+      const attachment = (socket as any).deserializeAttachment?.();
+      const deviceId = typeof attachment?.deviceId === 'string'
+        ? attachment.deviceId
+        : (typeof envelope.deviceId === 'string' ? envelope.deviceId : '');
+      if (!deviceId) return;
+      const db = requireD1(this.env);
+      if (db instanceof Response) return;
+      await handleAgentSocketMessage(db, this.env, deviceId, socket, text);
+    } catch (err) {
+      console.error('Agent Durable Object webSocketMessage error:', err);
     }
-    const attachment = (socket as any).deserializeAttachment?.();
-    const deviceId = typeof attachment?.deviceId === 'string'
-      ? attachment.deviceId
-      : (typeof envelope.deviceId === 'string' ? envelope.deviceId : '');
-    if (!deviceId) return;
-    const db = requireD1(this.env);
-    if (db instanceof Response) return;
-    await handleAgentSocketMessage(db, this.env, deviceId, socket, text);
   }
 
-  async webSocketClose(_socket: WebSocket, _code: number, _reason: string, _wasClean: boolean): Promise<void> {}
-  async webSocketError(_socket: WebSocket, error: unknown): Promise<void> {
-    console.error('Agent Durable Object WebSocket error:', error);
+  async webSocketClose(socket: WebSocket, _code: number, _reason: string, _wasClean: boolean): Promise<void> {
+    const attachment = (socket as any).deserializeAttachment?.();
+    if (attachment?.deviceId) {
+      try {
+        const db = requireD1(this.env);
+        if (!(db instanceof Response)) {
+          await new D1DeviceStore(db).updateDeviceStatus(attachment.deviceId, 'disconnected', new Date(nowMs(this.env)).toISOString());
+        }
+      } catch (err) {
+        console.error('Agent Durable Object webSocketClose status update failed:', err);
+      }
+    }
+  }
+  async webSocketError(socket: WebSocket, error: unknown): Promise<void> {
+    const attachment = (socket as any).deserializeAttachment?.();
+    if (attachment?.deviceId) {
+      try {
+        const db = requireD1(this.env);
+        if (!(db instanceof Response)) {
+          await new D1DeviceStore(db).updateDeviceStatus(
+            attachment.deviceId,
+            'disconnected',
+            new Date(nowMs(this.env)).toISOString(),
+          );
+        }
+      } catch (err) {
+        console.warn('Agent Durable Object webSocketError status update failed:', err);
+      }
+    }
+    console.warn('Agent Durable Object WebSocket disconnected:', String(error));
   }
 }
 

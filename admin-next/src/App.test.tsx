@@ -43,14 +43,14 @@ describe('App shell', () => {
     cleanup();
   });
 
-  it('renders Admin Next heading', () => {
+  it('renders Admin Dashboard heading', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [],
     }));
 
     render(<App />);
-    expect(screen.getByRole('heading', { name: /admin next/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /admin dashboard/i })).toBeInTheDocument();
   });
 
   it('shows empty state when device list is empty', async () => {
@@ -1954,7 +1954,7 @@ describe('App shell', () => {
   });
 
 
-  it('shows start action for idle tunnel and stop action for running tunnel', async () => {
+  it('shows dedicated runtime links for boundary servers', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => initialDevices });
       if (url === '/v1/devices/dev-1') return Promise.resolve({ ok: true, json: async () => initialDevices[0] });
@@ -1995,12 +1995,18 @@ describe('App shell', () => {
     const summary = within(summarySection.closest('section') as HTMLElement);
 
     await waitFor(() => {
-      expect(summary.getByRole('button', { name: 'Start tunnel for Idle Tunnel' })).toBeInTheDocument();
-      expect(summary.getByRole('button', { name: 'Stop tunnel for Running Tunnel' })).toBeInTheDocument();
+      expect(summary.getByRole('link', { name: 'Open runtime for Idle Tunnel' })).toHaveAttribute(
+        'href',
+        '/admin/devices/dev-1/servers/srv-1/runtime',
+      );
+      expect(summary.getByRole('link', { name: 'Open runtime for Running Tunnel' })).toHaveAttribute(
+        'href',
+        '/admin/devices/dev-1/servers/srv-2/runtime',
+      );
     });
   });
 
-  it('can load dedicated tunnel logs from runtime summary', async () => {
+  it('does not render tunnel logs inline in runtime summary', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => initialDevices });
       if (url === '/v1/devices/dev-1') return Promise.resolve({ ok: true, json: async () => initialDevices[0] });
@@ -2028,18 +2034,6 @@ describe('App shell', () => {
       if (url === '/v1/logs?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => [] });
       if (url === '/v1/commands?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
       if (url === '/v1/logs?deviceId=dev-1&limit=100') return Promise.resolve({ ok: true, json: async () => [] });
-      if (url.includes('/tunnels/srv-1/logs')) {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({
-            entries: [
-              { ts: '2026-04-23T03:33:23.000Z', sessionId: 'sess-1', data: 'Tunnel connected' },
-              { ts: '2026-04-23T03:33:24.000Z', sessionId: 'sess-1', data: 'Listening on 6222' },
-            ],
-            total: 2,
-          }),
-        });
-      }
       return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
     });
 
@@ -2053,17 +2047,8 @@ describe('App shell', () => {
     const summary = within(summarySection.closest('section') as HTMLElement);
 
     await waitFor(() => {
-      expect(summary.getByRole('button', { name: 'View logs for Running Tunnel' })).toBeInTheDocument();
-    });
-
-    fireEvent.click(summary.getByRole('button', { name: 'View logs for Running Tunnel' }));
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith('/v1/devices/dev-1/tunnels/srv-1/logs?limit=200&offset=0', {
-        credentials: 'same-origin',
-      });
-      expect(summary.getByLabelText('Tunnel logs')).toHaveTextContent('Tunnel connected');
-      expect(summary.getByLabelText('Tunnel logs')).toHaveTextContent('Listening on 6222');
+      expect(summary.getByRole('link', { name: 'Open runtime for Running Tunnel' })).toBeInTheDocument();
+      expect(summary.queryByLabelText('Tunnel logs')).not.toBeInTheDocument();
     });
   });
 

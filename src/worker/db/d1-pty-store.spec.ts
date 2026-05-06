@@ -19,6 +19,56 @@ class TestD1Database {
   close() { this.sqlite.close(); }
 }
 
+class LegacyPtySessionTestD1Database extends TestD1Database {
+  constructor() {
+    super();
+    this.sqlite.exec(`
+      DROP TABLE pty_audit;
+      DROP TABLE pty_sessions;
+      CREATE TABLE pty_sessions (
+        id TEXT PRIMARY KEY,
+        sessionId TEXT NOT NULL UNIQUE,
+        deviceId TEXT NOT NULL,
+        state TEXT NOT NULL,
+        openedByActorType TEXT,
+        openedByActorId TEXT,
+        attachedActorType TEXT,
+        attachedActorId TEXT,
+        recordingEnabled INTEGER NOT NULL DEFAULT 0,
+        recordingConsentAt TEXT,
+        cols INTEGER,
+        rows INTEGER,
+        openedAt TEXT NOT NULL,
+        lastAttachedAt TEXT,
+        lastDetachedAt TEXT,
+        lastOutputAt TEXT,
+        closeRequestedAt TEXT,
+        closedAt TEXT,
+        expiredAt TEXT,
+        failureCode TEXT,
+        failureDetail TEXT,
+        deletedAt TEXT,
+        kind TEXT NOT NULL DEFAULT 'generic',
+        serverId TEXT,
+        localSessionId TEXT,
+        scrollback TEXT NOT NULL DEFAULT ''
+      );
+      CREATE TABLE pty_audit (
+        id TEXT PRIMARY KEY,
+        sessionId TEXT NOT NULL,
+        deviceId TEXT NOT NULL,
+        ts TEXT NOT NULL,
+        eventType TEXT NOT NULL,
+        actorType TEXT,
+        actorId TEXT,
+        summary TEXT NOT NULL,
+        detailsJson TEXT,
+        createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  }
+}
+
 describe('D1PtySessionStore', () => {
   const databases: TestD1Database[] = [];
   afterEach(() => { while (databases.length) databases.pop()?.close(); });
@@ -122,6 +172,35 @@ describe('D1PtySessionStore', () => {
     await createOpenSession(store, 'pty-open');
 
     await expect(store.deleteTerminalSession('pty-open', '2026-04-29T00:00:00.000Z')).rejects.toThrow('not deletable');
+  });
+
+  it('self-migrates legacy pty_sessions before creating and finding server SSH sessions', async () => {
+    const db = new LegacyPtySessionTestD1Database();
+    databases.push(db);
+    await db.prepare('INSERT INTO devices (id, name, lastSeenAt, status, agentToken, os) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind('dev-1', 'Device One', '2026-04-29T00:00:00.000Z', 'connected', 'token-dev-1', 'linux')
+      .run();
+    const store = new D1PtySessionStore(db);
+
+    await expect(store.createOpening({
+      id: 'row-server-ssh',
+      sessionId: 'server-ssh-srv-1-pty-1',
+      deviceId: 'dev-1',
+      kind: 'server_ssh',
+      serverId: 'srv-1',
+      localSessionId: 'local-pty-1',
+      openedAt: '2026-04-29T00:00:00.000Z',
+    })).resolves.toMatchObject({
+      kind: 'server_ssh',
+      serverId: 'srv-1',
+      localSessionId: 'local-pty-1',
+    });
+
+    await store.markOpen('server-ssh-srv-1-pty-1', '2026-04-29T00:00:01.000Z');
+    await expect(store.findActiveServerSshSession('dev-1', 'srv-1')).resolves.toMatchObject({
+      sessionId: 'server-ssh-srv-1-pty-1',
+      kind: 'server_ssh',
+    });
   });
 });
 

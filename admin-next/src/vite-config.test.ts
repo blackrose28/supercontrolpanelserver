@@ -6,7 +6,13 @@ describe('Vite dev proxy', () => {
   it('proxies admin PTY websocket upgrades to cc-server', () => {
     const source = readFileSync(resolve(__dirname, '../vite.config.ts'), 'utf8');
 
-    expect(source).toMatch(/['"]\/admin['"]:\s*{[\s\S]*?target:\s*['"]http:\/\/localhost:3000['"][\s\S]*?ws:\s*true/s);
+    expect(source).toMatch(/['"]\/admin['"]:\s*{[\s\S]*?target:\s*['"]http:\/\/localhost:4000['"][\s\S]*?ws:\s*true/s);
+  });
+
+  it('serves admin runtime SPA routes from vite instead of proxying', () => {
+    const source = readFileSync(resolve(__dirname, '../vite.config.ts'), 'utf8');
+
+    expect(source).toContain("req.url?.startsWith('/admin/devices/')");
   });
 });
 

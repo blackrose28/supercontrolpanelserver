@@ -44,6 +44,7 @@ describe('DeviceListSection', () => {
         onRequestRecentLogs={vi.fn()}
         onRequestRestartOpenvpn={vi.fn()}
         onRequestRestartBoundaryAuth={vi.fn()}
+        onDeleteDevice={vi.fn()}
         deviceActionLoadingId={null}
         deviceActionError={null}
       />,

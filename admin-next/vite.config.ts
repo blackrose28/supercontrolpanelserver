@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -21,13 +21,26 @@ export default defineConfig({
     allowedHosts: ['dashboard.chuonglv.site'],
     proxy: {
       '/v1': {
-        target: 'http://localhost:3000',
+        target: 'http://localhost:4000',
         changeOrigin: true,
       },
       '/admin': {
-        target: 'http://localhost:3000',
+        target: 'http://localhost:4000',
         changeOrigin: true,
         ws: true,
+        bypass: (req) => {
+          // Serve frontend SPA routes from Vite instead of proxying them to cc-server.
+          if (
+            req.method === 'GET'
+            && (
+              req.url?.startsWith('/admin/login')
+              || req.url?.startsWith('/admin/devices/')
+            )
+          ) {
+            return req.url;
+          }
+          return null;
+        },
       },
     },
   },

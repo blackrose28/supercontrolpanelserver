@@ -27,6 +27,7 @@ export interface WorkerPtySessionRecord {
   failureCode: string | null;
   failureDetail: string | null;
   deletedAt?: string | null;
+  scrollback: string;
 }
 
 export interface WorkerPtyAuditRecord {
@@ -84,6 +85,7 @@ function mapPtyRow(row: Record<string, unknown>): WorkerPtySessionRecord {
     failureCode: nullableString(row.failureCode),
     failureDetail: nullableString(row.failureDetail),
     deletedAt: nullableString(row.deletedAt),
+    scrollback: typeof row.scrollback === "string" ? row.scrollback : "",
   };
 }
 
@@ -103,6 +105,7 @@ function mapAuditRow(row: Record<string, unknown>): WorkerPtyAuditRecord {
 
 export class D1PtySessionStore {
   private readonly pendingByReqSeq = new Map<string, { sessionId: string; type: WorkerPendingPtyReqType }>();
+  private readonly openingTimeoutMs = 120_000;
   private readonly detachGraceMs = 30_000;
   private readonly terminalRetentionMs = 7 * 24 * 60 * 60 * 1000;
 
@@ -245,6 +248,18 @@ export class D1PtySessionStore {
     return Promise.all(results.map((row) => this.getRequired(String(row.sessionId))));
   }
 
+  async expireOpeningSessions(nowIso: string, deviceId: string): Promise<WorkerPtySessionRecord[]> {
+    const cutoffIso = new Date(Date.parse(nowIso) - this.openingTimeoutMs).toISOString();
+    const { results = [] } = await this.db.prepare(
+      `SELECT * FROM pty_sessions WHERE deviceId = ? AND state = 'opening' AND openedAt <= ?`
+    ).bind(deviceId, cutoffIso).all<Record<string, unknown>>();
+    if (!results.length) return [];
+    await this.db.prepare(
+      `UPDATE pty_sessions SET state = 'expired', expiredAt = ?, failureCode = 'PTY_OPEN_TIMEOUT', failureDetail = 'PTY session did not open within the allowed window' WHERE deviceId = ? AND state = 'opening' AND openedAt <= ?`
+    ).bind(nowIso, deviceId, cutoffIso).run();
+    return results.map(mapPtyRow);
+  }
+
   trackPendingReq(deviceId: string, reqSeq: number, sessionId: string, type: WorkerPendingPtyReqType): void {
     this.pendingByReqSeq.set(`${deviceId}:${reqSeq}`, { sessionId, type });
   }
@@ -254,6 +269,13 @@ export class D1PtySessionStore {
     const pending = this.pendingByReqSeq.get(key);
     if (pending) this.pendingByReqSeq.delete(key);
     return pending;
+  }
+
+  async findActiveServerSshSession(deviceId: string, serverId: string): Promise<WorkerPtySessionRecord | undefined> {
+    const row = await this.db.prepare(
+      `SELECT * FROM pty_sessions WHERE deviceId = ? AND serverId = ? AND kind = 'server_ssh' AND state IN ('opening', 'open') ORDER BY openedAt DESC LIMIT 1`
+    ).bind(deviceId, serverId).first<Record<string, unknown>>();
+    return row ? mapPtyRow(row) : undefined;
   }
 
   async get(sessionId: string): Promise<WorkerPtySessionRecord | undefined> {
@@ -301,6 +323,27 @@ export class D1PtySessionStore {
     if (!record) throw new Error(`PTY session not found: ${sessionId}`);
     return record;
   }
+
+  // --- Scrollback buffer ---
+
+  private readonly maxScrollbackBytes = 32_000;
+
+  async appendScrollback(sessionId: string, data: string): Promise<void> {
+    if (!data) return;
+    const existing = await this.db.prepare('SELECT scrollback FROM pty_sessions WHERE sessionId = ?').bind(sessionId).first<{ scrollback: string }>();
+    const current = existing?.scrollback ?? '';
+    let merged = current + data;
+    if (merged.length > this.maxScrollbackBytes) {
+      merged = merged.slice(merged.length - this.maxScrollbackBytes);
+    }
+    await this.db.prepare('UPDATE pty_sessions SET scrollback = ? WHERE sessionId = ?').bind(merged, sessionId).run();
+  }
+
+  async getScrollback(sessionId: string): Promise<string> {
+    const row = await this.db.prepare('SELECT scrollback FROM pty_sessions WHERE sessionId = ?').bind(sessionId).first<{ scrollback: string }>();
+    return row?.scrollback ?? '';
+  }
+
 }
 
 export class D1PtyAuditStore {
@@ -339,3 +382,4 @@ export class D1PtyAuditStore {
     return results.map(mapAuditRow);
   }
 }
+
