@@ -16,6 +16,8 @@ spec:
   lifecycle: experimental
   owner: chuonglv
   system: controlpanel
+  providesApis:
+    - control-panel-api
 ---
 apiVersion: backstage.io/v1alpha1
 kind: API
