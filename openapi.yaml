@@ -1,0 +1,1031 @@
+openapi: 3.0.3
+info:
+  title: cc-server API
+  version: 1.0.0
+  description: Control Plane Server for SuperControlPanel (NestJS + Cloudflare Worker D1)
+servers:
+  - url: /
+components:
+  securitySchemes:
+    AdminSession:
+      type: apiKey
+      in: cookie
+      name: cc_admin_session
+      description: Also requires X-CSRF-Token or csrfToken in body for mutations.
+    AdminApiToken:
+      type: http
+      scheme: bearer
+      description: Static environment token or database-backed API token.
+    AgentToken:
+      type: http
+      scheme: bearer
+      description: Device agent authentication token.
+  schemas:
+    GenericResponse:
+      type: object
+      additionalProperties: true
+    CsrfProtectedRequest:
+      type: object
+      properties:
+        csrfToken:
+          type: string
+          description: Required if using AdminSession cookie auth
+  responses:
+    Success:
+      description: Successful operation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GenericResponse'
+
+security:
+  - AdminSession: []
+  - AdminApiToken: []
+
+paths:
+  /v1/health:
+    get:
+      summary: Health check
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/enroll:
+    post:
+      summary: Enroll a new device
+      tags: [Devices]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bootstrapToken]
+              properties:
+                bootstrapToken:
+                  type: string
+                deviceName:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/revoke:
+    post:
+      summary: Revoke current device
+      tags: [Devices]
+      security:
+        - AgentToken: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices:
+    get:
+      summary: List devices
+      tags: [Devices]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/stream:
+    get:
+      summary: Stream device status changes (SSE)
+      tags: [Devices]
+      responses:
+        '200':
+          description: Server-Sent Events stream
+
+  /v1/devices/{id}:
+    get:
+      summary: Get device details
+      tags: [Devices]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+    delete:
+      summary: Delete device
+      tags: [Devices]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CsrfProtectedRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/{id}/pty-sessions:
+    get:
+      summary: List PTY sessions for a device
+      tags: [Devices, PTY]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/{id}/tunnels/{serverId}/logs:
+    get:
+      summary: Get tunnel logs
+      tags: [Devices, Logs]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: serverId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/{id}/request-status-snapshot:
+    post:
+      summary: Request device status snapshot
+      tags: [Device Commands]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  properties:
+                    commandId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/{id}/request-inventory:
+    post:
+      summary: Request device inventory
+      tags: [Device Commands]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  properties:
+                    commandId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/{id}/request-recent-logs:
+    post:
+      summary: Request recent logs from device
+      tags: [Device Commands]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  properties:
+                    commandId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/{id}/request-restart-openvpn:
+    post:
+      summary: Restart OpenVPN on device
+      tags: [Device Commands]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  properties:
+                    commandId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/{id}/request-restart-boundary-auth:
+    post:
+      summary: Restart Boundary Auth on device
+      tags: [Device Commands]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  properties:
+                    commandId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/{id}/request-start-server-tunnel:
+    post:
+      summary: Start server tunnel on device
+      tags: [Device Commands]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [serverId]
+                  properties:
+                    serverId: {type: string}
+                    commandId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/{id}/request-stop-server-tunnel:
+    post:
+      summary: Stop server tunnel on device
+      tags: [Device Commands]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [serverId]
+                  properties:
+                    serverId: {type: string}
+                    commandId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/{id}/request-restart-server-tunnel:
+    post:
+      summary: Restart server tunnel on device
+      tags: [Device Commands]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [serverId]
+                  properties:
+                    serverId: {type: string}
+                    commandId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/{id}/request-start-server-ssh:
+    post:
+      summary: Start server SSH on device
+      tags: [Device Commands]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [serverId]
+                  properties:
+                    serverId: {type: string}
+                    commandId: {type: string}
+                    sessionId: {type: string}
+                    cols: {type: number}
+                    rows: {type: number}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/{id}/request-attach-server-ssh:
+    post:
+      summary: Attach to existing server SSH session on device
+      tags: [Device Commands]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [serverId, localSessionId]
+                  properties:
+                    serverId: {type: string}
+                    localSessionId: {type: string}
+                    commandId: {type: string}
+                    sessionId: {type: string}
+                    cols: {type: number}
+                    rows: {type: number}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/devices/{id}/request-restart-server-ssh:
+    post:
+      summary: Restart server SSH on device
+      tags: [Device Commands]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [serverId]
+                  properties:
+                    serverId: {type: string}
+                    commandId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/commands:
+    get:
+      summary: List commands
+      tags: [Commands]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/commands/stream:
+    get:
+      summary: Stream commands (SSE)
+      tags: [Commands]
+      responses:
+        '200':
+          description: Server-Sent Events stream
+
+  /v1/commands/{id}:
+    get:
+      summary: Get command details
+      tags: [Commands]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/commands/{id}/audit:
+    get:
+      summary: Get command audit log
+      tags: [Commands]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/logs:
+    get:
+      summary: List logs
+      tags: [Logs]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+    post:
+      summary: Ingest logs
+      tags: [Logs]
+      security:
+        - AgentToken: []
+      requestBody:
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/logs/stream:
+    get:
+      summary: Stream telemetry (SSE)
+      tags: [Logs]
+      responses:
+        '200':
+          description: Server-Sent Events stream
+
+  /v1/logs/export:
+    get:
+      summary: Export logs
+      tags: [Logs]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/device-summary:
+    get:
+      summary: Get device summary telemetry
+      tags: [Logs]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/log-settings:
+    get:
+      summary: Get log settings
+      tags: [Logs]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/telemetry:
+    get:
+      summary: Get telemetry overview
+      tags: [Logs]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-transfers:
+    get:
+      summary: List file transfers
+      tags: [File Ops]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-transfers/stream:
+    get:
+      summary: Stream file transfers (SSE)
+      tags: [File Ops]
+      responses:
+        '200':
+          description: Server-Sent Events stream
+
+  /v1/file-transfers/dismiss:
+    post:
+      summary: Dismiss file transfer
+      tags: [File Ops]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  properties:
+                    transferId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-transfers/stop:
+    post:
+      summary: Stop file transfer
+      tags: [File Ops]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  properties:
+                    transferId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-transfers/force-remove:
+    post:
+      summary: Force remove file transfer
+      tags: [File Ops]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  properties:
+                    transferId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-transfers/dismiss-finished:
+    post:
+      summary: Dismiss all finished file transfers
+      tags: [File Ops]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CsrfProtectedRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-transfers/slo-summary:
+    get:
+      summary: Get file transfer SLO summary
+      tags: [File Ops]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-transfers/upload:
+    post:
+      summary: Start SCP upload
+      tags: [File Ops]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [deviceId, serverId, localPath, remotePath]
+                  properties:
+                    deviceId: {type: string}
+                    serverId: {type: string}
+                    localPath: {type: string}
+                    remotePath: {type: string}
+                    recursive: {type: boolean}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-transfers/download:
+    post:
+      summary: Start SCP download
+      tags: [File Ops]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [deviceId, serverId, remotePath, localPath]
+                  properties:
+                    deviceId: {type: string}
+                    serverId: {type: string}
+                    remotePath: {type: string}
+                    localPath: {type: string}
+                    recursive: {type: boolean}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-ops/remote-browser/open:
+    post:
+      summary: Open remote browser
+      tags: [Remote Browser]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [deviceId, serverId]
+                  properties:
+                    deviceId: {type: string}
+                    serverId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-ops/remote-browser/list:
+    post:
+      summary: List remote directory contents
+      tags: [Remote Browser]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [browserId, path]
+                  properties:
+                    browserId: {type: string}
+                    path: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-ops/remote-browser/stat:
+    post:
+      summary: Stat remote path
+      tags: [Remote Browser]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [browserId, path]
+                  properties:
+                    browserId: {type: string}
+                    path: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-ops/remote-browser/mkdir:
+    post:
+      summary: Create remote directory
+      tags: [Remote Browser]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [browserId, path]
+                  properties:
+                    browserId: {type: string}
+                    path: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-ops/remote-browser/delete:
+    post:
+      summary: Delete remote path
+      tags: [Remote Browser]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [browserId, path]
+                  properties:
+                    browserId: {type: string}
+                    path: {type: string}
+                    recursive: {type: boolean}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /v1/file-ops/remote-browser/close:
+    post:
+      summary: Close remote browser
+      tags: [Remote Browser]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [browserId]
+                  properties:
+                    browserId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/login:
+    post:
+      summary: Admin login
+      tags: [Admin]
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/login/totp:
+    post:
+      summary: Verify TOTP for login
+      tags: [Admin]
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, sessionId]
+              properties:
+                token: {type: string}
+                sessionId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/login/recovery:
+    post:
+      summary: Use recovery code for login
+      tags: [Admin]
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, sessionId]
+              properties:
+                code: {type: string}
+                sessionId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/logout:
+    post:
+      summary: Admin logout
+      tags: [Admin]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CsrfProtectedRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/api-tokens:
+    get:
+      summary: List API tokens
+      tags: [Admin]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+    post:
+      summary: Create API token
+      tags: [Admin]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [description, scopes]
+                  properties:
+                    description: {type: string}
+                    scopes:
+                      type: array
+                      items: {type: string}
+                    expiresAt: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/api-tokens/{tokenId}/revoke:
+    post:
+      summary: Revoke API token
+      tags: [Admin]
+      parameters:
+        - name: tokenId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CsrfProtectedRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/totp/status:
+    get:
+      summary: Get TOTP status
+      tags: [Admin]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/totp/setup:
+    post:
+      summary: Setup TOTP
+      tags: [Admin]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CsrfProtectedRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/totp/verify-setup:
+    post:
+      summary: Verify TOTP setup
+      tags: [Admin]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [token]
+                  properties:
+                    token: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/totp/disable:
+    post:
+      summary: Disable TOTP
+      tags: [Admin]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [token]
+                  properties:
+                    token: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/totp/recovery-codes:
+    get:
+      summary: Get TOTP recovery codes
+      tags: [Admin]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/totp/regenerate-recovery-codes:
+    post:
+      summary: Regenerate TOTP recovery codes
+      tags: [Admin]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CsrfProtectedRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/sessions:
+    get:
+      summary: List Admin sessions
+      tags: [Admin]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/sessions/revoke:
+    post:
+      summary: Revoke Admin session
+      tags: [Admin]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [sessionId]
+                  properties:
+                    sessionId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/sessions/revoke-all:
+    post:
+      summary: Revoke all other Admin sessions
+      tags: [Admin]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CsrfProtectedRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/audit-log:
+    get:
+      summary: List Admin audit log
+      tags: [Admin]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/v1/alerts:
+    get:
+      summary: List Admin alerts
+      tags: [Admin]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /admin/v1/alerts/dismiss:
+    post:
+      summary: Dismiss Admin alert
+      tags: [Admin]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/CsrfProtectedRequest'
+                - type: object
+                  required: [alertId]
+                  properties:
+                    alertId: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
