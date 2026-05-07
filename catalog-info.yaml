@@ -1,0 +1,17 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: super-control-panel-server
+  description: Super Control Panel Server
+  tags:
+    - nodejs
+    - cross-platform
+    - server
+    - cloudflare
+  annotations:
+    gitlab.com/project-slug: chuonglv/supercontrolpanelserver
+
+spec:
+  type: service
+  lifecycle: experimental
+  owner: chuonglv
