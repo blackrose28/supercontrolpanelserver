@@ -1,4 +1,4 @@
-import type { RuntimeSummary, TunnelLogEntry } from '../api/adminApi';
+import type { RuntimeSummary } from '../api/adminApi';
 import { Link } from 'react-router-dom';
 import { formatTimestamp } from '../utils/formatTimestamp';
 
@@ -7,16 +7,6 @@ type RuntimeSummarySectionProps = {
   runtimeSummaryLoading: boolean;
   runtimeSummaryError: string | null;
   runtimeSummary: RuntimeSummary | null;
-  selectedTunnelServerId: string | null;
-  tunnelLogs: TunnelLogEntry[];
-  tunnelLogsLoading: boolean;
-  tunnelLogsError: string | null;
-  tunnelLogsTotal: number;
-  onLoadMoreTunnelLogs: () => void;
-  onSelectTunnelServer: (serverId: string) => void;
-  onRefreshTunnelLogs: () => void;
-  sshTerminals?: Array<{ deviceId: string; serverId: string; sessionId: string }>;
-  onSshTerminalClosed?: (terminal: { deviceId: string; serverId: string; sessionId: string }) => void;
   onRetry: () => void;
 };
 
@@ -25,16 +15,6 @@ export function RuntimeSummarySection({
   runtimeSummaryLoading,
   runtimeSummaryError,
   runtimeSummary,
-  selectedTunnelServerId,
-  tunnelLogs,
-  tunnelLogsLoading,
-  tunnelLogsError,
-  tunnelLogsTotal,
-  onLoadMoreTunnelLogs,
-  onSelectTunnelServer,
-  onRefreshTunnelLogs,
-  sshTerminals = [],
-  onSshTerminalClosed,
   onRetry,
 }: RuntimeSummarySectionProps) {
   const boundaryServers = Array.isArray(runtimeSummary?.inventory?.servers)
@@ -43,7 +23,6 @@ export function RuntimeSummarySection({
       )
     : [];
   const functionEntries = Object.entries(runtimeSummary?.functions || {});
-  const selectedTunnelLogCount = selectedTunnelServerId ? tunnelLogs.length : 0;
 
   return (
     <section className="panel-section runtime-summary-section">
@@ -88,10 +67,6 @@ export function RuntimeSummarySection({
               <span className="runtime-summary-stat-label">Boundary tunnels</span>
               <strong className="runtime-summary-stat-value">{boundaryServers.length}</strong>
             </div>
-            <div className="runtime-summary-stat-card">
-              <span className="runtime-summary-stat-label">Logs loaded</span>
-              <strong className="runtime-summary-stat-value">{selectedTunnelLogCount}</strong>
-            </div>
           </div>
 
           <h3>Functions</h3>
@@ -116,9 +91,6 @@ export function RuntimeSummarySection({
               {boundaryServers.map((server) => {
                 const serverId = String(server.id || '').trim();
                 const serverName = String(server.name || serverId || 'Unnamed server');
-                const functionId = `server-tunnel-${serverId}`;
-                const tunnelState = String(runtimeSummary?.functions?.[functionId]?.state || '').toLowerCase();
-                const isRunning = tunnelState === 'running';
                 const serverRuntimeHref = selectedDeviceId
                   ? `/admin/devices/${encodeURIComponent(selectedDeviceId)}/servers/${encodeURIComponent(serverId)}/runtime`
                   : '#';
@@ -130,9 +102,6 @@ export function RuntimeSummarySection({
                         <strong>{serverName}</strong>
                         <p className="runtime-summary-tunnel-host">{server.host ? String(server.host) : 'No host reported'}</p>
                       </div>
-                      <span className={`transfer-state-badge ${isRunning ? 'state-succeeded' : 'state-canceled'}`}>
-                        {isRunning ? 'On' : 'Off'}
-                      </span>
                     </div>
                     <div className="runtime-summary-tunnel-actions">
                       <Link

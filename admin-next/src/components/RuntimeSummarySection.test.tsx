@@ -36,17 +36,8 @@ describe('RuntimeSummarySection', () => {
         ],
       },
     },
-    selectedTunnelServerId: null,
-    tunnelLogs: [],
-    tunnelLogsLoading: false,
-    tunnelLogsError: null,
-    tunnelLogsTotal: 0,
-    sshTerminals: [],
-    onLoadMoreTunnelLogs: vi.fn(),
-    onSelectTunnelServer: vi.fn(),
-    onRefreshTunnelLogs: vi.fn(),
     onRetry: vi.fn(),
-  } as const;
+  };
 
   it('renders helper copy, summary cards, and Boundary server runtime links', () => {
     renderSection(baseProps);
@@ -55,7 +46,7 @@ describe('RuntimeSummarySection', () => {
     const highlights = screen.getByLabelText('Runtime summary highlights');
     expect(highlights).toHaveTextContent('Functions reporting');
     expect(highlights).toHaveTextContent('Boundary tunnels');
-    expect(highlights).toHaveTextContent('Logs loaded');
+    expect(highlights).not.toHaveTextContent('Logs loaded');
     expect(highlights).toHaveTextContent('3');
     expect(highlights).toHaveTextContent('2');
     expect(screen.getByText('Boundary tunnel servers')).toBeInTheDocument();
@@ -75,18 +66,14 @@ describe('RuntimeSummarySection', () => {
 
     expect(screen.queryByRole('button', { name: 'Stop tunnel for Boundary Alpha' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Start tunnel for Boundary Beta' })).not.toBeInTheDocument();
+    expect(screen.queryByText('On')).not.toBeInTheDocument();
+    expect(screen.queryByText('Off')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open runtime for Boundary Alpha' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open runtime for Boundary Beta' })).toBeInTheDocument();
   });
 
   it('does not render tunnel logs or SSH terminals inline', () => {
-    renderSection({
-      ...baseProps,
-      selectedTunnelServerId: 'srv-1',
-      tunnelLogs: [{ ts: '2026-04-20T00:00:01.000Z', sessionId: 'sess-1', data: 'Tunnel connected' }],
-      tunnelLogsTotal: 1,
-      sshTerminals: [{ deviceId: 'dev-1', serverId: 'srv-1', sessionId: 'ssh-session-1' }],
-    });
+    renderSection(baseProps);
 
     expect(screen.getByRole('link', { name: 'Open runtime for Boundary Alpha' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Tunnel logs')).not.toBeInTheDocument();
