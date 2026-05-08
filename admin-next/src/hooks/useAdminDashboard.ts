@@ -5,11 +5,9 @@ import {
   fetchCommands,
   fetchDeviceDetails,
   fetchDevices,
-  fetchPtySessions,
   fetchRecentLogs,
   fetchRuntimeSummary,
   fetchTelemetry,
-  fetchTunnelLogs,
   fetchTransfers,
   requestRecentLogs,
   requestRestartOpenvpn,
@@ -29,12 +27,10 @@ import {
   type CommandAuditEntry,
   type CommandHistoryEntry,
   type RecentLogEntry,
-  type PtySessionEntry,
   type RuntimeSummary,
   type ScpTransferDirection,
   type ScpTransferPayload,
   type TelemetryEntry,
-  type TunnelLogEntry, type TunnelLogsResponse,
   type TransferEntry,
   subscribeTelemetryStream,
   subscribeCommandsStream,
@@ -43,13 +39,21 @@ import {
 } from '../api/adminApi';
 import type { DeviceSummary } from '../types/device';
 
+/** Active panel in the device workspace (admin dashboard tabs). Drives on-demand API loading. */
+export type AdminDeviceWorkspaceTab =
+  | 'details'
+  | 'runtime'
+  | 'logs'
+  | 'commands'
+  | 'transfers'
+  | 'telemetry';
+
 type ActiveSshTerminal = {
   deviceId: string;
   serverId: string;
   sessionId: string;
 };
 
-const SERVER_SSH_SESSION_PATTERN = /^server-ssh-(.+)-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RUNTIME_SUMMARY_TELEMETRY_TYPES = new Set(['function-status', 'inventory', 'status_snapshot']);
 
 function telemetryType(entry?: TelemetryEntry): string {
@@ -72,59 +76,10 @@ function shouldRefetchTelemetryListFromTelemetry(entry?: TelemetryEntry): boolea
   return telemetryType(entry) !== 'pty-output';
 }
 
-function serverIdFromSshSessionId(sessionId: string): string | null {
-  const match = SERVER_SSH_SESSION_PATTERN.exec(sessionId.trim());
-  return match?.[1] || null;
-}
-
-function activeSshTerminalsFromPtySessions(deviceId: string, sessions: PtySessionEntry[]): ActiveSshTerminal[] {
-  const byServerId = new Map<string, { terminal: ActiveSshTerminal; state: string; openedAtMs: number }>();
-
-  for (const session of sessions) {
-    const sessionId = typeof session.sessionId === 'string' ? session.sessionId.trim() : '';
-    const state = typeof session.state === 'string' ? session.state.trim().toLowerCase() : '';
-    const serverId =
-      typeof session.serverId === 'string' && session.serverId.trim()
-        ? session.serverId.trim()
-        : serverIdFromSshSessionId(sessionId);
-
-    if (!serverId || !['opening', 'open'].includes(state)) {
-      continue;
-    }
-
-    const openedAtMs = typeof session.openedAt === 'string' ? Date.parse(session.openedAt) : 0;
-    const candidate = {
-      terminal: { deviceId, serverId, sessionId },
-      state,
-      openedAtMs: Number.isFinite(openedAtMs) ? openedAtMs : 0,
-    };
-    const current = byServerId.get(serverId);
-    if (
-      !current
-      || (candidate.state === 'open' && current.state !== 'open')
-      || (candidate.state === current.state && candidate.openedAtMs > current.openedAtMs)
-    ) {
-      byServerId.set(serverId, candidate);
-    }
-  }
-
-  return Array.from(byServerId.values()).map((entry) => entry.terminal);
-}
-
-function runtimeSummaryHasActiveSsh(summary: RuntimeSummary): boolean {
-  return Object.entries(summary.functions ?? {}).some(([functionId, status]) => {
-    const state = typeof status?.state === 'string' ? status.state.trim().toLowerCase() : '';
-    return functionId.startsWith('server-ssh-') && ['starting', 'running'].includes(state);
-  });
-}
-
-function runtimeSummaryHasServers(summary: RuntimeSummary): boolean {
-  return Array.isArray(summary.inventory?.servers) && summary.inventory.servers.length > 0;
-}
-
-export function useAdminDashboard() {
+export function useAdminDashboard(activeWorkspaceTab: AdminDeviceWorkspaceTab) {
   const selectionRequestIdRef = useRef(0);
   const snapshotRefreshTimersRef = useRef<number[]>([]);
+  const workspaceLoadGenerationRef = useRef(0);
 
   const [devices, setDevices] = useState<DeviceSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -142,12 +97,7 @@ export function useAdminDashboard() {
   const [recentLogs, setRecentLogs] = useState<RecentLogEntry[]>([]);
   const [recentLogsLoading, setRecentLogsLoading] = useState(false);
   const [recentLogsError, setRecentLogsError] = useState<string | null>(null);
-  const [selectedTunnelServerId, setSelectedTunnelServerId] = useState<string | null>(null);
   const [activeSshTerminals, setActiveSshTerminals] = useState<ActiveSshTerminal[]>([]);
-  const [tunnelLogs, setTunnelLogs] = useState<TunnelLogEntry[]>([]);
-  const [tunnelLogsLoading, setTunnelLogsLoading] = useState(false);
-  const [tunnelLogsError, setTunnelLogsError] = useState<string | null>(null);
-  const [tunnelLogsTotal, setTunnelLogsTotal] = useState(0);
 
   const [commands, setCommands] = useState<CommandHistoryEntry[]>([]);
   const [commandsLoading, setCommandsLoading] = useState(false);
@@ -188,128 +138,8 @@ export function useAdminDashboard() {
     )));
   }, []);
 
-  async function loadActiveSshTerminalsOnly(deviceId: string, requestId?: number, summary?: RuntimeSummary) {
-    try {
-      const sessions = await fetchPtySessions(deviceId);
-      if (requestId != null && selectionRequestIdRef.current !== requestId) {
-        return;
-      }
-
-      const hydratedTerminals = activeSshTerminalsFromPtySessions(deviceId, sessions);
-
-      if (requestId != null && selectionRequestIdRef.current !== requestId) {
-        return;
-      }
-      setActiveSshTerminals((previous) => [...previous.filter((terminal) => terminal.deviceId !== deviceId), ...hydratedTerminals]);
-    } catch {
-      return;
-    }
-  }
-
-  function loadActiveSshTerminalsFromSummary(deviceId: string, summary: RuntimeSummary, requestId?: number) {
-    if (requestId != null && selectionRequestIdRef.current !== requestId) {
-      return;
-    }
-
-    if (!runtimeSummaryHasActiveSsh(summary) && !(requestId != null && runtimeSummaryHasServers(summary))) {
-      return;
-    }
-
-    void loadActiveSshTerminalsOnly(deviceId, requestId, summary);
-  }
-
-  async function loadSelectedDevice(deviceId: string) {
-    const requestId = selectionRequestIdRef.current + 1;
-    selectionRequestIdRef.current = requestId;
-
-    setSelectedDeviceLoading(true);
-    setRuntimeSummaryLoading(true);
-    setRecentLogsLoading(true);
-
-    const deviceTask = fetchDeviceDetails(deviceId)
-      .then((devicePayload) => {
-        if (selectionRequestIdRef.current !== requestId) {
-          return;
-        }
-
-        setSelectedDeviceDetails(devicePayload);
-        setSelectedDeviceError(null);
-      })
-      .catch((err) => {
-        if (selectionRequestIdRef.current !== requestId) {
-          return;
-        }
-
-        const message = err instanceof Error ? err.message : 'Failed to load selected device details';
-        setSelectedDeviceDetails(null);
-        setSelectedDeviceError(message);
-        setRuntimeSummary(null);
-        setRuntimeSummaryError(null);
-        setRecentLogs([]);
-        setRecentLogsError(null);
-      })
-      .finally(() => {
-        if (selectionRequestIdRef.current !== requestId) {
-          return;
-        }
-
-        setSelectedDeviceLoading(false);
-      });
-
-    const summaryTask = fetchRuntimeSummary(deviceId)
-      .then((summaryPayload) => {
-        if (selectionRequestIdRef.current !== requestId) {
-          return;
-        }
-
-        setRuntimeSummary(summaryPayload);
-        setRuntimeSummaryError(null);
-        loadActiveSshTerminalsFromSummary(deviceId, summaryPayload, requestId);
-      })
-      .catch((err) => {
-        if (selectionRequestIdRef.current !== requestId) {
-          return;
-        }
-
-        const message = err instanceof Error ? err.message : 'Failed to load runtime summary';
-        setRuntimeSummary(null);
-        setRuntimeSummaryError(message);
-      })
-      .finally(() => {
-        if (selectionRequestIdRef.current !== requestId) {
-          return;
-        }
-
-        setRuntimeSummaryLoading(false);
-      });
-
-    const logsTask = fetchRecentLogs(deviceId, recentLogsLimit)
-      .then((logsPayload) => {
-        if (selectionRequestIdRef.current !== requestId) {
-          return;
-        }
-
-        setRecentLogs(logsPayload);
-        setRecentLogsError(null);
-      })
-      .catch((err) => {
-        if (selectionRequestIdRef.current !== requestId) {
-          return;
-        }
-
-        const message = err instanceof Error ? err.message : 'Failed to load recent logs';
-        setRecentLogs([]);
-        setRecentLogsError(message);
-      })
-      .finally(() => {
-        if (selectionRequestIdRef.current !== requestId) {
-          return;
-        }
-
-        setRecentLogsLoading(false);
-      });
-
-    await Promise.all([deviceTask, summaryTask, logsTask]);
+  function isStaleWorkspaceGeneration(generation: number): boolean {
+    return generation !== workspaceLoadGenerationRef.current;
   }
 
   async function loadRuntimeSummaryOnly(deviceId: string) {
@@ -319,7 +149,6 @@ export function useAdminDashboard() {
       const summaryPayload = await fetchRuntimeSummary(deviceId);
       setRuntimeSummary(summaryPayload);
       setRuntimeSummaryError(null);
-      loadActiveSshTerminalsFromSummary(deviceId, summaryPayload);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load runtime summary';
       setRuntimeSummary(null);
@@ -329,18 +158,25 @@ export function useAdminDashboard() {
     }
   }
 
-  async function loadRecentLogsOnly(deviceId: string, options?: { silent?: boolean }) {
+  async function loadRecentLogsOnly(deviceId: string, options?: { silent?: boolean; workspaceGeneration?: number }) {
     const silent = options?.silent === true;
+    const workspaceGeneration = options?.workspaceGeneration;
     if (!silent) {
       setRecentLogsLoading(true);
     }
 
     try {
       const logsPayload = await fetchRecentLogs(deviceId, recentLogsLimit);
+      if (workspaceGeneration != null && isStaleWorkspaceGeneration(workspaceGeneration)) {
+        return;
+      }
       setRecentLogs(logsPayload);
       setRecentLogsError(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load recent logs';
+      if (workspaceGeneration != null && isStaleWorkspaceGeneration(workspaceGeneration)) {
+        return;
+      }
       if (!silent) {
         setRecentLogs([]);
       }
@@ -349,42 +185,6 @@ export function useAdminDashboard() {
       if (!silent) {
         setRecentLogsLoading(false);
       }
-    }
-  }
-
-  async function loadTunnelLogsOnly(
-    deviceId: string,
-    serverId: string,
-    options?: { silent?: boolean; append?: boolean; offset?: number },
-  ) {
-    const silent = options?.silent === true;
-    const append = options?.append === true;
-    const offset = options?.offset ?? (append ? tunnelLogs.length : 0);
-    if (!silent) {
-      setTunnelLogsLoading(true);
-    }
-
-    try {
-      const { entries, total } = await fetchTunnelLogs(deviceId, serverId, 200, offset);
-      setTunnelLogs((prev) => (append ? [...prev, ...entries] : entries));
-      setTunnelLogsTotal(total);
-      setTunnelLogsError(null);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load tunnel logs';
-      if (!silent && !append) {
-        setTunnelLogs([]);
-      }
-      setTunnelLogsError(message);
-    } finally {
-      if (!silent) {
-        setTunnelLogsLoading(false);
-      }
-    }
-  }
-
-  function loadMoreTunnelLogs() {
-    if (selectedDeviceId && selectedTunnelServerId && tunnelLogs.length < tunnelLogsTotal) {
-      void loadTunnelLogsOnly(selectedDeviceId, selectedTunnelServerId, { append: true });
     }
   }
 
@@ -409,14 +209,18 @@ export function useAdminDashboard() {
     await loadCommandAudit(commandId);
   }
 
-  async function loadCommands(deviceId: string, options?: { silent?: boolean }) {
+  async function loadCommands(deviceId: string, options?: { silent?: boolean; workspaceGeneration?: number }) {
     const silent = options?.silent === true;
+    const workspaceGeneration = options?.workspaceGeneration;
     if (!silent) {
       setCommandsLoading(true);
     }
 
     try {
       const nextCommands = await fetchCommands(deviceId, commandsLimit);
+      if (workspaceGeneration != null && isStaleWorkspaceGeneration(workspaceGeneration)) {
+        return;
+      }
       setCommands(nextCommands);
       setCommandsError(null);
 
@@ -428,6 +232,9 @@ export function useAdminDashboard() {
 
       if (nextSelectedCommandId) {
         await loadCommandAudit(nextSelectedCommandId);
+        if (workspaceGeneration != null && isStaleWorkspaceGeneration(workspaceGeneration)) {
+          return;
+        }
       } else {
         setCommandAudit([]);
         setCommandAuditError(null);
@@ -435,6 +242,9 @@ export function useAdminDashboard() {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load commands';
+      if (workspaceGeneration != null && isStaleWorkspaceGeneration(workspaceGeneration)) {
+        return;
+      }
       setCommands([]);
       setCommandsError(message);
       setSelectedCommandId(null);
@@ -464,15 +274,21 @@ export function useAdminDashboard() {
     setTransfersError(null);
   }
 
-  async function loadTransfers(deviceId: string) {
+  async function loadTransfers(deviceId: string, workspaceGeneration?: number) {
     setTransfersLoading(true);
 
     try {
       const nextTransfers = await fetchTransfers(deviceId, transfersLimit);
+      if (workspaceGeneration != null && isStaleWorkspaceGeneration(workspaceGeneration)) {
+        return;
+      }
       setTransfers(nextTransfers);
       setTransfersError(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load transfers';
+      if (workspaceGeneration != null && isStaleWorkspaceGeneration(workspaceGeneration)) {
+        return;
+      }
       setTransfers([]);
       setTransfersError(message);
     } finally {
@@ -531,7 +347,7 @@ export function useAdminDashboard() {
     }
   }
 
-  async function loadTelemetry(deviceId: string) {
+  async function loadTelemetry(deviceId: string, workspaceGeneration?: number) {
     setTelemetryLoading(true);
 
     try {
@@ -542,10 +358,16 @@ export function useAdminDashboard() {
         fromTs: telemetryFromTsFilter.trim() || undefined,
         toTs: telemetryToTsFilter.trim() || undefined,
       });
+      if (workspaceGeneration != null && isStaleWorkspaceGeneration(workspaceGeneration)) {
+        return;
+      }
       setTelemetry(events);
       setTelemetryError(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load telemetry';
+      if (workspaceGeneration != null && isStaleWorkspaceGeneration(workspaceGeneration)) {
+        return;
+      }
       setTelemetry([]);
       setTelemetryError(message);
     } finally {
@@ -680,7 +502,6 @@ export function useAdminDashboard() {
       setDeviceActionError(null);
       void loadDevices();
       if (selectedDeviceId === deviceId) {
-        setSelectedTunnelServerId(null);
         setSelectedDeviceId('');
       }
     } catch (err) {
@@ -802,10 +623,6 @@ export function useAdminDashboard() {
       setRecentLogs([]);
       setRecentLogsError(null);
       setRecentLogsLoading(false);
-      setSelectedTunnelServerId(null);
-      setTunnelLogs([]);
-      setTunnelLogsError(null);
-      setTunnelLogsLoading(false);
       setCommands([]);
       setCommandsError(null);
       setCommandsLoading(false);
@@ -826,72 +643,189 @@ export function useAdminDashboard() {
       return;
     }
 
-    void loadSelectedDevice(selectedDeviceId);
-  }, [selectedDeviceId, recentLogsLimit]);
+    setRuntimeSummary(null);
+    setRuntimeSummaryError(null);
+    setRuntimeSummaryLoading(false);
+    setRecentLogs([]);
+    setRecentLogsError(null);
+    setRecentLogsLoading(false);
+    setCommands([]);
+    setCommandsError(null);
+    setCommandsLoading(false);
+    setSelectedCommandId(null);
+    setCommandAudit([]);
+    setCommandAuditError(null);
+    setCommandAuditLoading(false);
+    setTransfers([]);
+    setTransfersError(null);
+    setTransfersLoading(false);
+    setTransferActionLoading(false);
+    setTransferStartLoading(false);
+    setActiveTransferId(null);
+    setTelemetry([]);
+    setTelemetryError(null);
+    setTelemetryLoading(false);
+    setActiveSshTerminals([]);
+    setSelectedDeviceDetails(null);
+    setSelectedDeviceError(null);
+    setSelectedDeviceLoading(false);
+  }, [selectedDeviceId]);
+
+  useEffect(() => {
+    if (!selectedDeviceId) {
+      return;
+    }
+    const deviceId = selectedDeviceId;
+
+    const generation = ++workspaceLoadGenerationRef.current;
+
+    async function run() {
+      switch (activeWorkspaceTab) {
+        case 'details': {
+          setSelectedDeviceLoading(true);
+          setSelectedDeviceError(null);
+          try {
+            const devicePayload = await fetchDeviceDetails(deviceId);
+            if (isStaleWorkspaceGeneration(generation)) {
+              return;
+            }
+            setSelectedDeviceDetails(devicePayload);
+          } catch (err) {
+            if (isStaleWorkspaceGeneration(generation)) {
+              return;
+            }
+            const message = err instanceof Error ? err.message : 'Failed to load selected device details';
+            setSelectedDeviceDetails(null);
+            setSelectedDeviceError(message);
+          } finally {
+            setSelectedDeviceLoading(false);
+          }
+          break;
+        }
+        case 'runtime': {
+          setRuntimeSummaryLoading(true);
+          setRuntimeSummaryError(null);
+          try {
+            const summaryPayload = await fetchRuntimeSummary(deviceId);
+            if (isStaleWorkspaceGeneration(generation)) {
+              return;
+            }
+            setRuntimeSummary(summaryPayload);
+            setRuntimeSummaryError(null);
+          } catch (err) {
+            if (isStaleWorkspaceGeneration(generation)) {
+              return;
+            }
+            const message = err instanceof Error ? err.message : 'Failed to load runtime summary';
+            setRuntimeSummary(null);
+            setRuntimeSummaryError(message);
+          } finally {
+            setRuntimeSummaryLoading(false);
+          }
+          break;
+        }
+        case 'logs': {
+          await loadRecentLogsOnly(deviceId, { workspaceGeneration: generation });
+          break;
+        }
+        case 'commands': {
+          await loadCommands(deviceId, { workspaceGeneration: generation });
+          break;
+        }
+        case 'transfers': {
+          await Promise.all([
+            loadTransfers(deviceId, generation),
+            (async () => {
+              setRuntimeSummaryLoading(true);
+              setRuntimeSummaryError(null);
+              try {
+                const summaryPayload = await fetchRuntimeSummary(deviceId);
+                if (isStaleWorkspaceGeneration(generation)) {
+                  return;
+                }
+                setRuntimeSummary(summaryPayload);
+                setRuntimeSummaryError(null);
+              } catch (err) {
+                if (isStaleWorkspaceGeneration(generation)) {
+                  return;
+                }
+                const message = err instanceof Error ? err.message : 'Failed to load runtime summary';
+                setRuntimeSummary(null);
+                setRuntimeSummaryError(message);
+              } finally {
+                setRuntimeSummaryLoading(false);
+              }
+            })(),
+          ]);
+          break;
+        }
+        case 'telemetry': {
+          await loadTelemetry(deviceId, generation);
+          break;
+        }
+        default: {
+          const _exhaustive: never = activeWorkspaceTab;
+          return _exhaustive;
+        }
+      }
+    }
+
+    void run();
+  }, [
+    selectedDeviceId,
+    activeWorkspaceTab,
+    recentLogsLimit,
+    commandsLimit,
+    transfersLimit,
+    telemetryLimit,
+    telemetryTypeFilter,
+    telemetryTextFilter,
+    telemetryFromTsFilter,
+    telemetryToTsFilter,
+  ]);
 
   useEffect(() => {
     if (!selectedDeviceId) {
       return;
     }
 
-    void loadCommands(selectedDeviceId);
-  }, [selectedDeviceId, commandsLimit]);
+    const wantTelemetryStream = activeWorkspaceTab === 'runtime' || activeWorkspaceTab === 'telemetry';
+    const wantTransfersStream = activeWorkspaceTab === 'transfers';
+    const wantCommandsStream = activeWorkspaceTab === 'commands';
 
-  useEffect(() => {
-    if (!selectedDeviceId) {
-      return;
-    }
+    const telemetrySub = wantTelemetryStream
+      ? subscribeTelemetryStream(selectedDeviceId, (entry) => {
+        if (activeWorkspaceTab === 'runtime' && shouldRefreshRuntimeSummaryFromTelemetry(entry)) {
+          void loadRuntimeSummaryOnly(selectedDeviceId);
+        }
+        if (activeWorkspaceTab === 'telemetry' && shouldRefetchTelemetryListFromTelemetry(entry)) {
+          void loadTelemetry(selectedDeviceId);
+        }
+      })
+      : { unsubscribe: () => {} };
 
-    void loadTelemetry(selectedDeviceId);
-  }, [selectedDeviceId, telemetryTypeFilter, telemetryTextFilter, telemetryFromTsFilter, telemetryToTsFilter, telemetryLimit]);
+    const transfersSub = wantTransfersStream
+      ? subscribeTransfersStream(selectedDeviceId, (transfer) => {
+        if (transfer?.transferId) {
+          upsertTransfer(transfer);
+          return;
+        }
+        void loadTransfers(selectedDeviceId);
+      })
+      : { unsubscribe: () => {} };
 
-  useEffect(() => {
-    if (!selectedDeviceId || !selectedTunnelServerId) {
-      setTunnelLogs([]);
-      setTunnelLogsError(null);
-      setTunnelLogsLoading(false);
-      setTunnelLogsTotal(0);
-      return;
-    }
-
-    void loadTunnelLogsOnly(selectedDeviceId, selectedTunnelServerId);
-  }, [selectedDeviceId, selectedTunnelServerId]);
-
-  useEffect(() => {
-    if (!selectedDeviceId) {
-      return;
-    }
-
-    const telemetrySub = subscribeTelemetryStream(selectedDeviceId, (entry) => {
-      if (shouldRefreshRuntimeSummaryFromTelemetry(entry)) {
-        void loadRuntimeSummaryOnly(selectedDeviceId);
-      }
-      if (shouldRefetchTelemetryListFromTelemetry(entry)) {
-        void loadTelemetry(selectedDeviceId);
-      }
-      if (selectedTunnelServerId && shouldRefetchTelemetryListFromTelemetry(entry)) {
-        void loadTunnelLogsOnly(selectedDeviceId, selectedTunnelServerId, { silent: true });
-      }
-    });
-
-    const transfersSub = subscribeTransfersStream(selectedDeviceId, (transfer) => {
-      if (transfer?.transferId) {
-        upsertTransfer(transfer);
-        return;
-      }
-      void loadTransfers(selectedDeviceId);
-    });
-
-    const commandsSub = subscribeCommandsStream(selectedDeviceId, () => {
-      void loadCommands(selectedDeviceId, { silent: true });
-    });
+    const commandsSub = wantCommandsStream
+      ? subscribeCommandsStream(selectedDeviceId, () => {
+        void loadCommands(selectedDeviceId, { silent: true });
+      })
+      : { unsubscribe: () => {} };
 
     return () => {
       telemetrySub.unsubscribe();
       transfersSub.unsubscribe();
       commandsSub.unsubscribe();
     };
-  }, [selectedDeviceId, selectedTunnelServerId, telemetryTypeFilter, telemetryTextFilter, telemetryFromTsFilter, telemetryToTsFilter, recentLogsLimit, commandsLimit, telemetryLimit]);
+  }, [selectedDeviceId, activeWorkspaceTab]);
 
   const telemetryExportUrl = selectedDeviceId
     ? buildTelemetryExportUrl(selectedDeviceId, {
@@ -917,12 +851,6 @@ export function useAdminDashboard() {
     recentLogs,
     recentLogsLoading,
     recentLogsError,
-    selectedTunnelServerId,
-    tunnelLogs,
-    tunnelLogsLoading,
-    tunnelLogsError,
-    tunnelLogsTotal,
-    loadMoreTunnelLogs,
     commands,
     commandsLoading,
     commandsError,
@@ -1006,7 +934,6 @@ export function useAdminDashboard() {
     },
     selectDevice: (deviceId: string) => {
       setDeviceActionError(null);
-      setSelectedTunnelServerId(null);
       setSelectedDeviceId(deviceId);
     },
     requestStatusSnapshot: (deviceId: string) => {
@@ -1014,14 +941,6 @@ export function useAdminDashboard() {
     },
     requestRecentLogs: (deviceId: string) => {
       void runRequestRecentLogs(deviceId);
-    },
-    selectTunnelServer: (serverId: string) => {
-      setSelectedTunnelServerId(serverId);
-    },
-    refreshTunnelLogs: () => {
-      if (selectedDeviceId && selectedTunnelServerId) {
-        void loadTunnelLogsOnly(selectedDeviceId, selectedTunnelServerId);
-      }
     },
     requestRestartOpenvpn: (deviceId: string) => {
       void runRequestRestartOpenvpn(deviceId);

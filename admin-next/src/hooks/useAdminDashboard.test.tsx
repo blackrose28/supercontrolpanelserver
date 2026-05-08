@@ -1,11 +1,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { subscribeTelemetryStream, subscribeTransfersStream } from '../api/adminApi';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DeviceListSection } from '../components/DeviceListSection';
-import { useAdminDashboard } from './useAdminDashboard';
+import { useAdminDashboard, type AdminDeviceWorkspaceTab } from './useAdminDashboard';
 
 function HookHarness() {
-  const model = useAdminDashboard();
+  const [workspaceTab, setWorkspaceTab] = useState<AdminDeviceWorkspaceTab>('details');
+  const model = useAdminDashboard(workspaceTab);
 
   return (
     <>
@@ -27,6 +29,27 @@ function HookHarness() {
       <button type="button" onClick={() => model.selectDevice('dev-1')}>
         Select dev-1
       </button>
+      <div className="workspace-tab-rail">
+        <button type="button" aria-label="Workspace tab details" onClick={() => setWorkspaceTab('details')}>
+          Tab details
+        </button>
+        <button type="button" aria-label="Workspace tab runtime" onClick={() => setWorkspaceTab('runtime')}>
+          Tab runtime
+        </button>
+        <button type="button" aria-label="Workspace tab logs" onClick={() => setWorkspaceTab('logs')}>
+          Tab logs
+        </button>
+        <button type="button" aria-label="Workspace tab commands" onClick={() => setWorkspaceTab('commands')}>
+          Tab commands
+        </button>
+        <button type="button" aria-label="Workspace tab transfers" onClick={() => setWorkspaceTab('transfers')}>
+          Tab transfers
+        </button>
+        <button type="button" aria-label="Workspace tab telemetry" onClick={() => setWorkspaceTab('telemetry')}>
+          Tab telemetry
+        </button>
+      </div>
+      <p>Active workspace tab: {workspaceTab}</p>
       <button type="button" onClick={() => model.requestStatusSnapshot('dev-1')}>
         Request snapshot dev-1
       </button>
@@ -46,20 +69,7 @@ function HookHarness() {
         Start SSH terminal dev-1 srv-1
       </button>
       <p>Active SSH terminals: {model.activeSshTerminals.map((terminal) => terminal.sessionId).join(', ') || '-'}</p>
-      <button type="button" onClick={() => model.selectTunnelServer('srv-1')}>
-        View tunnel logs dev-1 srv-1
-      </button>
-      <button type="button" onClick={model.refreshTunnelLogs}>
-        Refresh tunnel logs
-      </button>
-      <p>Selected tunnel server: {model.selectedTunnelServerId || '-'}</p>
       <p>Tunnel state: {model.runtimeSummary?.functions?.['server-tunnel-srv-1']?.state || '-'}</p>
-      <p>Tunnel logs loading: {model.tunnelLogsLoading ? 'yes' : 'no'}</p>
-      <p>Tunnel logs count: {model.tunnelLogs.length}</p>
-      {model.tunnelLogs.map((entry, index) => (
-        <p key={`${entry.ts || 'log'}-${index}`}>Tunnel log: {entry.data}</p>
-      ))}
-      {model.tunnelLogsError ? <p>{model.tunnelLogsError}</p> : null}
       <button type="button" onClick={model.retryRuntimeSummary}>
         Retry runtime summary
       </button>
@@ -199,7 +209,6 @@ describe('useAdminDashboard', () => {
       })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }) })
       .mockResolvedValueOnce({ ok: false, json: async () => ({}) })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ deviceId: 'dev-1', updatedAt: '2026-04-20T00:00:00.000Z', functions: { 'vpn-agent': { state: 'running' } } }),
@@ -211,6 +220,7 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab runtime' }));
 
     await waitFor(() => {
       expect(screen.getByText('Failed to load runtime summary')).toBeInTheDocument();
@@ -263,6 +273,7 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab logs' }));
 
     await waitFor(() => {
       expect(screen.getByText('Failed to load recent logs')).toBeInTheDocument();
@@ -317,6 +328,7 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab commands' }));
 
     await waitFor(() => {
       expect(screen.getByText('Commands count: 1')).toBeInTheDocument();
@@ -368,6 +380,7 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab commands' }));
 
     await waitFor(() => {
       expect(screen.getByText('Selected command: cmd-1')).toBeInTheDocument();
@@ -407,6 +420,7 @@ describe('useAdminDashboard', () => {
 
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab commands' }));
 
     await waitFor(() => expect(screen.getByText('Selected command: cmd-1')).toBeInTheDocument());
 
@@ -460,6 +474,7 @@ describe('useAdminDashboard', () => {
 
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab commands' }));
 
     await waitFor(() => {
       expect(screen.getByText('Selected command: cmd-1')).toBeInTheDocument();
@@ -505,6 +520,7 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab transfers' }));
     fireEvent.click(screen.getByRole('button', { name: 'Refresh transfers' }));
 
     await waitFor(() => {
@@ -549,6 +565,7 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab telemetry' }));
 
     await waitFor(() => {
       expect(screen.getByText('Telemetry count: 1')).toBeInTheDocument();
@@ -593,6 +610,7 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab telemetry' }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/v1/logs?deviceId=dev-1&limit=100', {
@@ -641,6 +659,7 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab transfers' }));
     fireEvent.click(screen.getByRole('button', { name: 'Stop transfer' }));
 
     await waitFor(() => {
@@ -832,17 +851,11 @@ describe('useAdminDashboard', () => {
     });
   });
 
-  it('hydrates active SSH terminals from existing PTY sessions when selecting a device', async () => {
+  it('does not hydrate active SSH terminals from PTY sessions on dashboard runtime tab', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
-      if (url === '/v1/devices/dev-1/pty-sessions') {
-        return Promise.resolve({ ok: true, json: async () => ({
-          items: [
-            { sessionId: 'server-ssh-srv-1-11111111-1111-4111-8111-111111111111', state: 'open' },
-            { sessionId: 'server-ssh-srv-2-22222222-2222-4222-8222-222222222222', state: 'closed' },
-            { sessionId: 'plain-pty-1', state: 'open' },
-          ],
-        }) });
+      if (url === '/v1/devices/dev-1') {
+        return Promise.resolve({ ok: true, json: async () => ({ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }) });
       }
       if (url === '/v1/device-summary?deviceId=dev-1') {
         return Promise.resolve({ ok: true, json: async () => ({
@@ -861,144 +874,11 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
-
-    await waitFor(() => expect(screen.getByText('Active SSH terminals: server-ssh-srv-1-11111111-1111-4111-8111-111111111111')).toBeInTheDocument());
-    expect(screen.queryByText(/server-ssh-srv-2/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/plain-pty-1/)).not.toBeInTheDocument();
-  });
-
-  it('hydrates active SSH terminals from PTY sessions even when runtime summary lacks server SSH functions', async () => {
-    const fetchMock = vi.fn((url: string) => {
-      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
-      if (url === '/v1/devices/dev-1/pty-sessions') {
-        return Promise.resolve({ ok: true, json: async () => ({
-          items: [
-            { sessionId: 'server-ssh-srv-1-11111111-1111-4111-8111-111111111111', state: 'open' },
-          ],
-        }) });
-      }
-      if (url === '/v1/device-summary?deviceId=dev-1') {
-        return Promise.resolve({ ok: true, json: async () => ({
-          deviceId: 'dev-1',
-          updatedAt: '2026-04-23T10:00:00.000Z',
-          functions: {},
-          inventory: { servers: [{ id: 'srv-1', name: 'Boundary Alpha', connectionMethod: 'boundary' }] },
-        }) });
-      }
-      if (url === '/v1/commands?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
-      return Promise.resolve({ ok: true, json: async () => [] });
-    });
-
-    vi.stubGlobal('fetch', fetchMock);
-    render(<HookHarness />);
-    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
-
-    await waitFor(() => expect(screen.getByText('Active SSH terminals: server-ssh-srv-1-11111111-1111-4111-8111-111111111111')).toBeInTheDocument());
-  });
-
-  it('hydrates active SSH terminals from PTY sessions that carry serverId metadata', async () => {
-    const fetchMock = vi.fn((url: string) => {
-      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
-      if (url === '/v1/devices/dev-1/pty-sessions') {
-        return Promise.resolve({ ok: true, json: async () => ({
-          items: [
-            { sessionId: '36528a8f-fa45-454c-82fa-4fa34fb4daec', serverId: 'srv-1', state: 'opening' },
-          ],
-        }) });
-      }
-      if (url === '/v1/device-summary?deviceId=dev-1') {
-        return Promise.resolve({ ok: true, json: async () => ({
-          deviceId: 'dev-1',
-          updatedAt: '2026-05-05T04:47:29.071Z',
-          functions: {},
-          inventory: { servers: [{ id: 'srv-1', name: 'Boundary Alpha', connectionMethod: 'boundary' }] },
-        }) });
-      }
-      if (url === '/v1/commands?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
-      return Promise.resolve({ ok: true, json: async () => [] });
-    });
-
-    vi.stubGlobal('fetch', fetchMock);
-    render(<HookHarness />);
-    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
-
-    await waitFor(() => expect(screen.getByText('Active SSH terminals: 36528a8f-fa45-454c-82fa-4fa34fb4daec')).toBeInTheDocument());
-  });
-
-  it('dedupes active SSH terminals to one PTY per server and prefers open newest sessions', async () => {
-    const fetchMock = vi.fn((url: string) => {
-      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
-      if (url === '/v1/devices/dev-1/pty-sessions') {
-        return Promise.resolve({ ok: true, json: async () => ({
-          items: [
-            { sessionId: 'older-open', serverId: 'srv-1', state: 'open', openedAt: '2026-05-05T04:47:29.000Z' },
-            { sessionId: 'newer-opening', serverId: 'srv-1', state: 'opening', openedAt: '2026-05-05T04:47:31.000Z' },
-            { sessionId: 'newer-open', serverId: 'srv-1', state: 'open', openedAt: '2026-05-05T04:47:30.000Z' },
-            { sessionId: 'server-ssh-srv-2-22222222-2222-4222-8222-222222222222', state: 'open', openedAt: '2026-05-05T04:47:30.000Z' },
-          ],
-        }) });
-      }
-      if (url === '/v1/device-summary?deviceId=dev-1') {
-        return Promise.resolve({ ok: true, json: async () => ({
-          deviceId: 'dev-1',
-          updatedAt: '2026-05-05T04:47:29.071Z',
-          functions: {},
-          inventory: { servers: [{ id: 'srv-1', name: 'Boundary Alpha', connectionMethod: 'boundary' }] },
-        }) });
-      }
-      if (url === '/v1/commands?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
-      return Promise.resolve({ ok: true, json: async () => [] });
-    });
-
-    vi.stubGlobal('fetch', fetchMock);
-    render(<HookHarness />);
-    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
-
-    await waitFor(() => expect(screen.getByText('Active SSH terminals: newer-open, server-ssh-srv-2-22222222-2222-4222-8222-222222222222')).toBeInTheDocument());
-    expect(screen.queryByText(/older-open/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/newer-opening/)).not.toBeInTheDocument();
-  });
-
-  it('does not auto-adopt runtime-summary local SSH PTYs without a remote PTY session row', async () => {
-    vi.spyOn(document, 'querySelector').mockImplementation((selector: string) => {
-      if (selector === 'meta[name="csrf-token"]') {
-        return { getAttribute: () => 'csrf-ssh' } as unknown as Element;
-      }
-      return null;
-    });
-
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
-      if (url === '/v1/devices/dev-1/pty-sessions') return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
-      if (url === '/v1/device-summary?deviceId=dev-1') {
-        return Promise.resolve({ ok: true, json: async () => ({
-          deviceId: 'dev-1',
-          updatedAt: '2026-04-23T10:00:00.000Z',
-          functions: { 'server-ssh-srv-1': { state: 'running', sessionId: 'pty-3' } },
-          inventory: { servers: [{ id: 'srv-1', name: 'Boundary Alpha', connectionMethod: 'boundary' }] },
-        }) });
-      }
-      if (url === '/v1/commands?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
-      return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
-    });
-
-    vi.stubGlobal('fetch', fetchMock);
-    render(<HookHarness />);
-    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab runtime' }));
 
     await waitFor(() => expect(screen.getByText('Active SSH terminals: -')).toBeInTheDocument());
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      '/v1/devices/dev-1/request-attach-server-ssh',
-      expect.anything(),
-    );
+    const ptySessionCalls = fetchMock.mock.calls.filter(([url]) => url === '/v1/devices/dev-1/pty-sessions');
+    expect(ptySessionCalls).toHaveLength(0);
   });
 
   it('requests server SSH terminal and stores active session', async () => {
@@ -1056,6 +936,9 @@ describe('useAdminDashboard', () => {
     let summaryCalls = 0;
     const fetchMock = vi.fn((url: string) => {
       if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
+      if (url === '/v1/devices/dev-1') {
+        return Promise.resolve({ ok: true, json: async () => ({ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }) });
+      }
       if (url === '/v1/device-summary?deviceId=dev-1') {
         summaryCalls += 1;
         const state = summaryCalls === 1 ? 'running' : 'idle';
@@ -1074,6 +957,7 @@ describe('useAdminDashboard', () => {
     render(<HookHarness />);
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab runtime' }));
     await waitFor(() => expect(screen.getByText('Tunnel state: running')).toBeInTheDocument());
 
     eventSourceInstances.find((instance) => instance.url.includes('/v1/logs/stream'))?.onmessage?.();
@@ -1082,7 +966,7 @@ describe('useAdminDashboard', () => {
   });
 
 
-  it('does not refetch runtime, logs, or PTY sessions for parsed PTY output telemetry', async () => {
+  it('does not refetch runtime or logs for parsed PTY output telemetry', async () => {
     const eventSourceInstances: Array<{ listeners: Map<string, (event: MessageEvent) => void>; url: string; close: () => void }> = [];
     const eventSourceCtor = vi.fn(function(_url: string) {
       const instance = { listeners: new Map<string, (event: MessageEvent) => void>(), url: _url, close: vi.fn() };
@@ -1096,54 +980,6 @@ describe('useAdminDashboard', () => {
     });
     vi.stubGlobal('EventSource', eventSourceCtor as unknown as typeof EventSource);
 
-    const sshSessionId = 'server-ssh-srv-1-11111111-1111-4111-8111-111111111111';
-    const fetchMock = vi.fn((url: string) => {
-      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
-      if (url === '/v1/devices/dev-1') return Promise.resolve({ ok: true, json: async () => ({ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }) });
-      if (url === '/v1/device-summary?deviceId=dev-1') return Promise.resolve({ ok: true, json: async () => ({
-        deviceId: 'dev-1',
-        updatedAt: '2026-04-20T00:00:00.000Z',
-        functions: { 'server-ssh-srv-1': { state: 'running', sessionId: 'local-ssh-session-1' } },
-        inventory: { servers: [{ id: 'srv-1', name: 'Boundary Bastion', connectionMethod: 'boundary' }] },
-      }) });
-      if (url === '/v1/devices/dev-1/pty-sessions') return Promise.resolve({ ok: true, json: async () => ({ items: [{ sessionId: sshSessionId, state: 'open' }] }) });
-      if (url === '/v1/logs?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => [] });
-      if (url === '/v1/logs?deviceId=dev-1&limit=100') return Promise.resolve({ ok: true, json: async () => [] });
-      if (url === '/v1/commands?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
-      return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
-    });
-
-    vi.stubGlobal('fetch', fetchMock);
-    render(<HookHarness />);
-    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
-    await waitFor(() => expect(screen.getByText(`Active SSH terminals: ${sshSessionId}`)).toBeInTheDocument());
-
-    const countCalls = (targetUrl: string) => fetchMock.mock.calls.filter(([url]) => url === targetUrl).length;
-    const summaryCalls = countCalls('/v1/device-summary?deviceId=dev-1');
-    const telemetryCalls = countCalls('/v1/logs?deviceId=dev-1&limit=100');
-    const ptySessionCalls = countCalls('/v1/devices/dev-1/pty-sessions');
-
-    const telemetryStream = eventSourceInstances.find((instance) => instance.url.includes('/v1/logs/stream'));
-    telemetryStream?.listeners.get('telemetry')?.({
-      data: JSON.stringify({
-        id: 'evt-pty-1',
-        deviceId: 'dev-1',
-        type: 'pty-output',
-        sessionId: sshSessionId,
-        ts: '2026-04-21T00:00:00.000Z',
-        payload: { data: 'a' },
-      }),
-    } as MessageEvent);
-
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(countCalls('/v1/device-summary?deviceId=dev-1')).toBe(summaryCalls);
-    expect(countCalls('/v1/logs?deviceId=dev-1&limit=100')).toBe(telemetryCalls);
-    expect(countCalls('/v1/devices/dev-1/pty-sessions')).toBe(ptySessionCalls);
-  });
-
-  it('does not refetch PTY sessions when changing telemetry filters', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
       if (url === '/v1/devices/dev-1') return Promise.resolve({ ok: true, json: async () => ({ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }) });
@@ -1163,16 +999,29 @@ describe('useAdminDashboard', () => {
     render(<HookHarness />);
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab runtime' }));
     await waitFor(() => expect(screen.getByText('Tunnel state: -')).toBeInTheDocument());
 
-    const countPtySessionCalls = () => fetchMock.mock.calls.filter(([url]) => url === '/v1/devices/dev-1/pty-sessions').length;
-    const initialPtySessionCalls = countPtySessionCalls();
-    expect(initialPtySessionCalls).toBe(1);
+    const countCalls = (targetUrl: string) => fetchMock.mock.calls.filter(([url]) => url === targetUrl).length;
+    const summaryCalls = countCalls('/v1/device-summary?deviceId=dev-1');
+    const telemetryCalls = countCalls('/v1/logs?deviceId=dev-1&limit=100');
 
-    fireEvent.change(screen.getByLabelText('Telemetry text filter'), { target: { value: 'ssh' } });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/v1/logs?deviceId=dev-1&limit=100&q=ssh', expect.anything()));
+    const telemetryStream = eventSourceInstances.find((instance) => instance.url.includes('/v1/logs/stream'));
+    telemetryStream?.listeners.get('telemetry')?.({
+      data: JSON.stringify({
+        id: 'evt-pty-1',
+        deviceId: 'dev-1',
+        type: 'pty-output',
+        sessionId: 'server-ssh-srv-1-11111111-1111-4111-8111-111111111111',
+        ts: '2026-04-21T00:00:00.000Z',
+        payload: { data: 'a' },
+      }),
+    } as MessageEvent);
 
-    expect(countPtySessionCalls()).toBe(initialPtySessionCalls);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(countCalls('/v1/device-summary?deviceId=dev-1')).toBe(summaryCalls);
+    expect(countCalls('/v1/logs?deviceId=dev-1&limit=100')).toBe(telemetryCalls);
   });
 
   it('applies live transfer stream records without waiting for a refetch', async () => {
@@ -1203,16 +1052,17 @@ describe('useAdminDashboard', () => {
     render(<HookHarness />);
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab transfers' }));
     await waitFor(() => expect(screen.getByText('Transfers count: 0')).toBeInTheDocument());
 
     const stream = eventSourceInstances.find((instance) => instance.url.includes('/v1/file-transfers/stream'));
     stream?.listeners.get('file_transfer')?.({ data: JSON.stringify({ transferId: 'tr-live', direction: 'upload', state: 'running', percent: 64, updatedAt: '2026-04-21T00:00:00.000Z' }) } as MessageEvent);
 
     await waitFor(() => expect(screen.getByText('Transfers count: 1')).toBeInTheDocument());
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
-  it('loads tunnel logs for the selected tunnel server', async () => {
+  it('does not fetch per-server tunnel logs when selecting a device', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
       if (url === '/v1/devices/dev-1') return Promise.resolve({ ok: true, json: async () => ({ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }) });
@@ -1229,15 +1079,22 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
-    fireEvent.click(screen.getByRole('button', { name: 'View tunnel logs dev-1 srv-1' }));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith('/v1/devices/dev-1/tunnels/srv-1/logs?limit=200&offset=0', {
+      expect(fetchMock).toHaveBeenCalledWith('/v1/devices/dev-1', {
         credentials: 'same-origin',
       });
-      expect(screen.getByText('Selected tunnel server: srv-1')).toBeInTheDocument();
-      expect(screen.getByText('Tunnel log: Tunnel ready')).toBeInTheDocument();
     });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab runtime' }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/v1/device-summary?deviceId=dev-1', {
+        credentials: 'same-origin',
+      });
+    });
+
+    expect(fetchMock.mock.calls.some(([url]) => typeof url === 'string' && url.includes('/tunnels/') && url.includes('/logs'))).toBe(false);
   });
 
   it('runs dismiss transfer action and refreshes transfers', async () => {
@@ -1268,6 +1125,7 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab transfers' }));
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss transfer' }));
 
     await waitFor(() => {
@@ -1311,6 +1169,7 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab transfers' }));
     fireEvent.click(screen.getByRole('button', { name: 'Force remove transfer' }));
 
     await waitFor(() => {
@@ -1353,6 +1212,7 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab transfers' }));
     fireEvent.click(screen.getByRole('button', { name: 'Refresh transfers' }));
 
     await waitFor(() => {
@@ -1394,6 +1254,7 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab transfers' }));
     fireEvent.click(screen.getByRole('button', { name: 'Start upload transfer' }));
 
     await waitFor(() => {
@@ -1525,6 +1386,7 @@ describe('useAdminDashboard', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab transfers' }));
     fireEvent.click(screen.getByRole('button', { name: 'Clear finished transfers' }));
 
     await waitFor(() => {

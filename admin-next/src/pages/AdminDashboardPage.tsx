@@ -10,17 +10,12 @@ import { TelemetrySection } from '../components/TelemetrySection';
 import { TotpSection } from '../components/TotpSection';
 import { SessionSection } from '../components/SessionSection';
 import { AuditLogSection } from '../components/AuditLogSection';
-import { useAdminDashboard } from '../hooks/useAdminDashboard';
-
-type DeviceTabId =
-  | 'details'
-  | 'runtime'
-  | 'logs'
-  | 'commands'
-  | 'transfers'
-  | 'telemetry';
+import { useAdminDashboard, type AdminDeviceWorkspaceTab } from '../hooks/useAdminDashboard';
 
 export function AdminDashboardPage() {
+  const [expandedDeviceId, setExpandedDeviceId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<AdminDeviceWorkspaceTab>('details');
+
   const {
     devices,
     loading,
@@ -35,12 +30,6 @@ export function AdminDashboardPage() {
     recentLogs,
     recentLogsLoading,
     recentLogsError,
-    selectedTunnelServerId,
-    tunnelLogs,
-    tunnelLogsLoading,
-    tunnelLogsError,
-    tunnelLogsTotal,
-    loadMoreTunnelLogs,
     commands,
     commandsLoading,
     commandsError,
@@ -89,23 +78,16 @@ export function AdminDashboardPage() {
     refreshTelemetry,
     selectDevice,
     requestRecentLogs,
-    selectTunnelServer,
-    refreshTunnelLogs,
     requestRestartOpenvpn,
     requestRestartBoundaryAuth,
     deleteDevice,
     requestStartServerTunnel,
     requestStopServerTunnel,
     startServerSshTerminal,
-    activeSshTerminals,
-    removeSshTerminal,
     requestStatusSnapshot,
     retryRuntimeSummary,
     retryRecentLogs,
-  } = useAdminDashboard();
-
-  const [expandedDeviceId, setExpandedDeviceId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<DeviceTabId>('details');
+  } = useAdminDashboard(activeTab);
 
   function handleViewLogs(deviceId: string) {
     selectDevice(deviceId);
@@ -125,13 +107,13 @@ export function AdminDashboardPage() {
   }
 
   const tabs = useMemo(
-    () => [
-      { id: 'details' as const, label: 'Device Details' },
-      { id: 'runtime' as const, label: 'Runtime Summary' },
-      { id: 'logs' as const, label: 'Recent Logs' },
-      { id: 'commands' as const, label: 'Command History' },
-      { id: 'transfers' as const, label: 'Transfer Activity' },
-      { id: 'telemetry' as const, label: 'Telemetry' },
+    (): Array<{ id: AdminDeviceWorkspaceTab; label: string }> => [
+      { id: 'details', label: 'Device Details' },
+      { id: 'runtime', label: 'Runtime Summary' },
+      { id: 'logs', label: 'Recent Logs' },
+      { id: 'commands', label: 'Command History' },
+      { id: 'transfers', label: 'Transfer Activity' },
+      { id: 'telemetry', label: 'Telemetry' },
     ],
     [],
   );
@@ -196,16 +178,6 @@ export function AdminDashboardPage() {
               runtimeSummaryLoading={runtimeSummaryLoading}
               runtimeSummaryError={runtimeSummaryError}
               runtimeSummary={runtimeSummary}
-              selectedTunnelServerId={selectedTunnelServerId}
-              tunnelLogs={tunnelLogs}
-              tunnelLogsLoading={tunnelLogsLoading}
-              tunnelLogsError={tunnelLogsError}
-              tunnelLogsTotal={tunnelLogsTotal}
-              onLoadMoreTunnelLogs={loadMoreTunnelLogs}
-              onSelectTunnelServer={selectTunnelServer}
-              onRefreshTunnelLogs={refreshTunnelLogs}
-              sshTerminals={activeSshTerminals}
-              onSshTerminalClosed={removeSshTerminal}
               onRetry={retryRuntimeSummary}
             />
           </div>

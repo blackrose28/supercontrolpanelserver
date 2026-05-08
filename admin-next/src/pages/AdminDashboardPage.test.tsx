@@ -15,7 +15,7 @@ vi.mock('../components/AuditLogSection', () => ({
 }));
 
 vi.mock('../hooks/useAdminDashboard', () => ({
-  useAdminDashboard: () => ({
+  useAdminDashboard: (_activeWorkspaceTab: unknown) => ({
     devices: [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: '2026-04-20T00:00:00.000Z' }],
     loading: false,
     error: null,
@@ -29,12 +29,6 @@ vi.mock('../hooks/useAdminDashboard', () => ({
     recentLogs: [],
     recentLogsLoading: false,
     recentLogsError: null,
-    selectedTunnelServerId: null,
-    tunnelLogs: [],
-    tunnelLogsLoading: false,
-    tunnelLogsError: null,
-    tunnelLogsTotal: 0,
-    loadMoreTunnelLogs: vi.fn(),
     commands: [],
     commandsLoading: false,
     commandsError: null,
@@ -83,8 +77,6 @@ vi.mock('../hooks/useAdminDashboard', () => ({
     refreshTelemetry: vi.fn(),
     selectDevice: vi.fn(),
     requestRecentLogs: vi.fn(),
-    selectTunnelServer: vi.fn(),
-    refreshTunnelLogs: vi.fn(),
     requestRestartOpenvpn: vi.fn(),
     requestRestartBoundaryAuth: vi.fn(),
     requestStartServerTunnel: vi.fn(),

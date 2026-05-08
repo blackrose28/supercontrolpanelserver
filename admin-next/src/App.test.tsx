@@ -260,6 +260,7 @@ describe('App shell', () => {
 
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
     fireEvent.click(screen.getByRole('button', { name: /refresh transfers/i }));
 
     await waitFor(() => {
@@ -304,6 +305,7 @@ describe('App shell', () => {
 
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Command History' }));
 
     await waitFor(() => {
       expect(screen.getByText('Selected command: cmd-1')).toBeInTheDocument();
@@ -351,6 +353,7 @@ describe('App shell', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Command History' }));
 
     await waitFor(() => {
       expect(screen.getByText('No commands found.')).toBeInTheDocument();
@@ -390,6 +393,7 @@ describe('App shell', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Command History' }));
 
     await waitFor(() => {
       expect(screen.getByText('Failed to load commands')).toBeInTheDocument();
@@ -467,6 +471,7 @@ describe('App shell', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
     fireEvent.click(screen.getByRole('button', { name: /refresh transfers/i }));
 
     await waitFor(() => {
@@ -515,6 +520,7 @@ describe('App shell', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
     fireEvent.click(screen.getByRole('button', { name: /refresh transfers/i }));
 
     await waitFor(() => {
@@ -580,6 +586,7 @@ describe('App shell', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
     fireEvent.click(screen.getByRole('button', { name: /refresh transfers/i }));
 
     await waitFor(() => {
@@ -639,6 +646,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
     fireEvent.click(screen.getByRole('button', { name: /refresh transfers/i }));
 
     await waitFor(() => {
@@ -698,6 +706,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
     fireEvent.click(screen.getByRole('button', { name: /refresh transfers/i }));
 
     await waitFor(() => {
@@ -762,6 +771,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
     fireEvent.click(screen.getByRole('button', { name: /refresh transfers/i }));
 
     const stopButton = await screen.findByRole('button', { name: 'Stop' });
@@ -816,6 +826,7 @@ describe('App shell', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
     fireEvent.click(screen.getByRole('button', { name: /refresh transfers/i }));
 
     await waitFor(() => {
@@ -855,6 +866,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
     fireEvent.click(screen.getByRole('button', { name: /refresh transfers/i }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Resume' })).toBeInTheDocument());
@@ -901,6 +913,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
     fireEvent.click(screen.getByRole('button', { name: /refresh transfers/i }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Clear finished' })).toBeEnabled());
@@ -936,6 +949,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
     fireEvent.click(screen.getByRole('button', { name: /refresh transfers/i }));
 
     await waitFor(() => {
@@ -971,6 +985,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
     fireEvent.click(screen.getByRole('button', { name: /refresh transfers/i }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Resume' })).toBeInTheDocument());
@@ -1006,6 +1021,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
     fireEvent.click(screen.getByRole('button', { name: /refresh transfers/i }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Clear finished' })).toBeEnabled());
@@ -1067,6 +1083,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Telemetry' }));
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Telemetry' })).toBeInTheDocument();
@@ -1109,6 +1126,7 @@ describe('App shell', () => {
 
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Telemetry' }));
 
     await waitFor(() => {
       expect(screen.getAllByRole('listitem')).not.toHaveLength(0);
@@ -1242,6 +1260,7 @@ describe('App shell', () => {
 
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Telemetry' }));
 
     await waitFor(() => {
       expect(screen.getByText('No telemetry matched the current filters.')).toBeInTheDocument();
@@ -1279,6 +1298,7 @@ describe('App shell', () => {
 
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Telemetry' }));
 
     await waitFor(() => {
       expect(screen.getByText('Chart summary')).toBeInTheDocument();
@@ -1320,6 +1340,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Telemetry' }));
     fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'function_status' } });
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'vpn' } });
     fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-04-20T00:00:00.000Z' } });
@@ -1365,6 +1386,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Telemetry' }));
     fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'function_status' } });
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'vpn' } });
     fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-04-20T00:00:00.000Z' } });
@@ -1423,18 +1445,6 @@ describe('App shell', () => {
           os: 'linux',
           lastSeenAt: '2026-04-18T00:00:00.000Z',
         }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          deviceId: 'dev-1',
-          updatedAt: '2026-04-20T00:00:00.000Z',
-          functions: {},
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [],
       });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -1468,14 +1478,6 @@ describe('App shell', () => {
       .mockResolvedValueOnce({
         ok: false,
         json: async () => ({}),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          deviceId: 'dev-1',
-          updatedAt: '2026-04-20T00:00:00.000Z',
-          functions: {},
-        }),
       });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -1704,18 +1706,6 @@ describe('App shell', () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          deviceId: 'dev-1',
-          updatedAt: '2026-04-20T00:00:00.000Z',
-          functions: {},
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [],
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
           items: [
             {
               commandId: 'cmd-1',
@@ -1735,6 +1725,7 @@ describe('App shell', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Command History' }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/v1/commands?deviceId=dev-1&limit=20', {
@@ -1786,14 +1777,14 @@ describe('App shell', () => {
           updatedAt: '2026-04-20T00:00:00.000Z',
           functions: {},
         }),
-      })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] });
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Runtime Summary' }));
 
     await waitFor(() => {
       expect(screen.getByText('No functions reported.')).toBeInTheDocument();
@@ -1813,14 +1804,14 @@ describe('App shell', () => {
             'vpn-agent': { state: 'running', message: 'ok' },
           },
         }),
-      })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] });
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Runtime Summary' }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/v1/device-summary?deviceId=dev-1', {
@@ -1907,11 +1898,35 @@ describe('App shell', () => {
 
     await waitFor(() => {
       expect(screen.getAllByText('2026-04-18 07:00:00 GMT+7').length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Runtime Summary' }));
+    await waitFor(() => {
       expect(screen.getByText('Updated: 2026-04-20 07:00:00 GMT+7')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Recent Logs' }));
+    await waitFor(() => {
       expect(screen.getAllByText('2026-04-20 07:00:00 GMT+7').length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Command History' }));
+    await waitFor(() => {
       expect(screen.getByText('Submitted: 2026-04-20 07:00:00 GMT+7')).toBeInTheDocument();
       expect(screen.getByText('Finished: 2026-04-20 07:01:00 GMT+7')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'request_recent_logs' }));
+    await waitFor(() => {
       expect(screen.getByText(/queued/)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Transfer Activity' }));
+    await waitFor(() => {
+      expect(screen.getByText('Updated: 2026-04-21 07:00:00 GMT+7')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Telemetry' }));
+    await waitFor(() => {
       expect(screen.getByText('2026-04-22 07:00:00 GMT+7')).toBeInTheDocument();
     });
   });
@@ -1921,9 +1936,6 @@ describe('App shell', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => initialDevices })
       .mockResolvedValueOnce({ ok: true, json: async () => initialDevices[0] })
       .mockResolvedValueOnce({ ok: false, json: async () => ({}) })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -1940,6 +1952,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Runtime Summary' }));
 
     await waitFor(() => {
       expect(screen.getByText('Failed to load runtime summary')).toBeInTheDocument();
@@ -1990,6 +2003,7 @@ describe('App shell', () => {
     render(<App />);
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Runtime Summary' }));
 
     const summarySection = await screen.findByRole('heading', { name: 'Runtime Summary' });
     const summary = within(summarySection.closest('section') as HTMLElement);
@@ -2042,6 +2056,7 @@ describe('App shell', () => {
     render(<App />);
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Runtime Summary' }));
 
     const summarySection = await screen.findByRole('heading', { name: 'Runtime Summary' });
     const summary = within(summarySection.closest('section') as HTMLElement);
@@ -2061,14 +2076,6 @@ describe('App shell', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => initialDevices })
       .mockResolvedValueOnce({ ok: true, json: async () => initialDevices[0] })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          deviceId: 'dev-1',
-          updatedAt: '2026-04-20T00:00:00.000Z',
-          functions: {},
-        }),
-      })
       .mockImplementationOnce(() => pendingLogs);
     vi.stubGlobal('fetch', fetchMock);
 
@@ -2076,6 +2083,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Recent Logs' }));
 
     await waitFor(() => {
       expect(screen.getByText('Loading recent logs preview…')).toBeInTheDocument();
@@ -2093,14 +2101,6 @@ describe('App shell', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => initialDevices })
       .mockResolvedValueOnce({ ok: true, json: async () => initialDevices[0] })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          deviceId: 'dev-1',
-          updatedAt: '2026-04-20T00:00:00.000Z',
-          functions: {},
-        }),
-      })
       .mockResolvedValueOnce({ ok: true, json: async () => [] });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -2108,6 +2108,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Recent Logs' }));
 
     await waitFor(() => {
       expect(screen.getByText('No recent logs.')).toBeInTheDocument();
@@ -2118,14 +2119,6 @@ describe('App shell', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => initialDevices })
       .mockResolvedValueOnce({ ok: true, json: async () => initialDevices[0] })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          deviceId: 'dev-1',
-          updatedAt: '2026-04-20T00:00:00.000Z',
-          functions: {},
-        }),
-      })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ([
@@ -2144,6 +2137,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Recent Logs' }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/v1/logs?deviceId=dev-1&limit=20', {
@@ -2160,16 +2154,7 @@ describe('App shell', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => initialDevices })
       .mockResolvedValueOnce({ ok: true, json: async () => initialDevices[0] })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          deviceId: 'dev-1',
-          updatedAt: '2026-04-20T00:00:00.000Z',
-          functions: {},
-        }),
-      })
       .mockResolvedValueOnce({ ok: false, json: async () => ({}) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [] }) })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ([
@@ -2188,6 +2173,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Recent Logs' }));
 
     await waitFor(() => {
       expect(screen.getByText('Failed to load recent logs')).toBeInTheDocument();
@@ -2207,52 +2193,24 @@ describe('App shell', () => {
     });
   });
 
-  it('keeps logs rendered while runtime summary is still loading', async () => {
-    let resolveSummary: ((value: PendingSummaryResponse) => void) | undefined;
-    const pendingSummary = new Promise<PendingSummaryResponse>((resolve) => {
-      resolveSummary = resolve;
-    });
-
+  it('does not fetch runtime summary while viewing Recent Logs tab', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => initialDevices })
       .mockResolvedValueOnce({ ok: true, json: async () => initialDevices[0] })
-      .mockImplementationOnce(() => pendingSummary)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ([
-          {
-            id: 'log-1',
-            ts: '2026-04-20T00:00:10.000Z',
-            type: 'function_status',
-            functionId: 'vpn-agent',
-            payload: { state: 'running' },
-          },
-        ]),
-      });
+      .mockResolvedValueOnce({ ok: true, json: async () => [] });
     vi.stubGlobal('fetch', fetchMock);
 
     render(<App />);
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Recent Logs' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Loading runtime summary…')).toBeInTheDocument();
-      expect(screen.getByText('function_status')).toBeInTheDocument();
+      expect(screen.getByText('No recent logs.')).toBeInTheDocument();
     });
 
-    resolveSummary?.({
-      ok: true,
-      json: async () => ({
-        deviceId: 'dev-1',
-        updatedAt: '2026-04-20T00:00:00.000Z',
-        functions: {},
-      }),
-    });
-
-    await waitFor(() => {
-      expect(screen.queryByText('Loading runtime summary…')).not.toBeInTheDocument();
-    });
+    expect(fetchMock).not.toHaveBeenCalledWith('/v1/device-summary?deviceId=dev-1', { credentials: 'same-origin' });
   });
 
   it('ignores stale runtime summary responses when switching quickly', async () => {
@@ -2302,6 +2260,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Runtime Summary' }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/v1/device-summary?deviceId=dev-1', {
@@ -2310,6 +2269,7 @@ describe('App shell', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: /select device two/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Runtime Summary' }));
 
     await waitFor(() => {
       expect(screen.getByText('dev-2-fn')).toBeInTheDocument();
@@ -2387,6 +2347,7 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: /select device one/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Recent Logs' }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/v1/logs?deviceId=dev-1&limit=20', {
@@ -2395,6 +2356,7 @@ describe('App shell', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: /select device two/i }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Recent Logs' }));
 
     await waitFor(() => {
       expect(screen.getByText('dev-2-fn')).toBeInTheDocument();
