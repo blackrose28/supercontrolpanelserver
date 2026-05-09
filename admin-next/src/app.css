@@ -184,6 +184,32 @@ p {
   padding: 14px;
 }
 
+.runtime-summary-live-workspace {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(320px, 1fr) minmax(480px, 1.35fr);
+  align-items: start;
+}
+
+.runtime-summary-live-pane {
+  min-width: 0;
+}
+
+.runtime-summary-live-pane-logs {
+  max-height: 40rem;
+  overflow: auto;
+}
+
+.runtime-summary-live-log-list {
+  max-height: 34rem;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.runtime-summary-live-pane-terminal .ssh-terminal-section {
+  margin-top: 0;
+}
+
 .runtime-summary-message-card-error {
   border-color: #fecaca;
   background: #fef2f2;
@@ -1200,6 +1226,7 @@ body {
   }
 
   .runtime-summary-header,
+  .runtime-summary-live-workspace,
   .runtime-summary-log-toolbar,
   .runtime-summary-function-item,
   .runtime-summary-tunnel-meta,
@@ -1219,6 +1246,10 @@ body {
   }
 
   .runtime-summary-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-summary-live-workspace {
     grid-template-columns: 1fr;
   }
 
@@ -1599,14 +1630,19 @@ body {
   color: #f8fafc;
 }
 
+/* Definite height (not only min-height) so inner .xterm height:100% resolves; otherwise the canvas can be 0px tall. */
 .ssh-xterm-container {
   min-height: var(--runtime-summary-terminal-viewport-height, 34rem);
+  height: var(--runtime-summary-terminal-viewport-height, 34rem);
   padding: 0.75rem;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
 }
 
 .ssh-xterm-container .xterm {
-  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .runtime-summary-terminal-viewport {

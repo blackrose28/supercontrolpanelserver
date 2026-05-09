@@ -587,6 +587,14 @@ export function useAdminDashboard(activeWorkspaceTab: AdminDeviceWorkspaceTab) {
     };
   }, []);
 
+  // Devices stream lifecycle is mount-scoped: the handler reads the latest
+  // selectedDeviceId via a ref so changing selection does not tear down and
+  // reopen the SSE connection.
+  const selectedDeviceIdRef = useRef(selectedDeviceId);
+  useEffect(() => {
+    selectedDeviceIdRef.current = selectedDeviceId;
+  }, [selectedDeviceId]);
+
   useEffect(() => {
     const sub = subscribeDevicesStream((event) => {
       if (!event?.id) {
@@ -599,7 +607,7 @@ export function useAdminDashboard(activeWorkspaceTab: AdminDeviceWorkspaceTab) {
             : device,
         ),
       );
-      if (selectedDeviceId === event.id) {
+      if (selectedDeviceIdRef.current === event.id) {
         setSelectedDeviceDetails((current) =>
           current
             ? { ...current, status: event.status, lastSeenAt: event.lastSeenAt }
@@ -610,7 +618,7 @@ export function useAdminDashboard(activeWorkspaceTab: AdminDeviceWorkspaceTab) {
     return () => {
       sub.unsubscribe();
     };
-  }, [selectedDeviceId]);
+  }, []);
 
   useEffect(() => {
     if (!selectedDeviceId) {
@@ -784,25 +792,43 @@ export function useAdminDashboard(activeWorkspaceTab: AdminDeviceWorkspaceTab) {
     telemetryToTsFilter,
   ]);
 
+  const activeWorkspaceTabRef = useRef(activeWorkspaceTab);
+  useEffect(() => {
+    activeWorkspaceTabRef.current = activeWorkspaceTab;
+  }, [activeWorkspaceTab]);
+
+  // Telemetry stream lifecycle is decoupled from individual tab switches: it stays
+  // open while *either* the runtime or telemetry tab is active so toggling between
+  // those two tabs reuses the same SSE connection (paired with the ref-counted
+  // shared EventSource in adminApi.subscribeTelemetryStream).
+  const wantTelemetryStream = activeWorkspaceTab === 'runtime' || activeWorkspaceTab === 'telemetry';
+  useEffect(() => {
+    if (!selectedDeviceId || !wantTelemetryStream) {
+      return;
+    }
+
+    const sub = subscribeTelemetryStream(selectedDeviceId, (entry) => {
+      const currentTab = activeWorkspaceTabRef.current;
+      if (currentTab === 'runtime' && shouldRefreshRuntimeSummaryFromTelemetry(entry)) {
+        void loadRuntimeSummaryOnly(selectedDeviceId);
+      }
+      if (currentTab === 'telemetry' && shouldRefetchTelemetryListFromTelemetry(entry)) {
+        void loadTelemetry(selectedDeviceId);
+      }
+    });
+
+    return () => {
+      sub.unsubscribe();
+    };
+  }, [selectedDeviceId, wantTelemetryStream]);
+
   useEffect(() => {
     if (!selectedDeviceId) {
       return;
     }
 
-    const wantTelemetryStream = activeWorkspaceTab === 'runtime' || activeWorkspaceTab === 'telemetry';
     const wantTransfersStream = activeWorkspaceTab === 'transfers';
     const wantCommandsStream = activeWorkspaceTab === 'commands';
-
-    const telemetrySub = wantTelemetryStream
-      ? subscribeTelemetryStream(selectedDeviceId, (entry) => {
-        if (activeWorkspaceTab === 'runtime' && shouldRefreshRuntimeSummaryFromTelemetry(entry)) {
-          void loadRuntimeSummaryOnly(selectedDeviceId);
-        }
-        if (activeWorkspaceTab === 'telemetry' && shouldRefetchTelemetryListFromTelemetry(entry)) {
-          void loadTelemetry(selectedDeviceId);
-        }
-      })
-      : { unsubscribe: () => {} };
 
     const transfersSub = wantTransfersStream
       ? subscribeTransfersStream(selectedDeviceId, (transfer) => {
@@ -821,7 +847,6 @@ export function useAdminDashboard(activeWorkspaceTab: AdminDeviceWorkspaceTab) {
       : { unsubscribe: () => {} };
 
     return () => {
-      telemetrySub.unsubscribe();
       transfersSub.unsubscribe();
       commandsSub.unsubscribe();
     };
