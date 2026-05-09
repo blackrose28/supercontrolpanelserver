@@ -260,6 +260,7 @@ export type TelemetryEntry = {
   ts?: string;
   type?: string;
   functionId?: string;
+  sessionId?: string | null;
   payload?: unknown;
 };
 
@@ -672,40 +673,85 @@ function parseStreamData<T>(event: MessageEvent): T | undefined {
   }
 }
 
-function subscribeStream<T>(url: string, eventName: string, onMessage: (data?: T) => void): StreamSubscription {
+type NamedEventStreamBucket = {
+  source: EventSource;
+  subscribers: Set<(data?: unknown) => void>;
+};
+
+/** One browser EventSource per URL; multiple subscribers receive fan-out (ref-counted). */
+const sharedNamedEventStreams = new Map<string, NamedEventStreamBucket>();
+
+function dispatchNamedEventStream(bucket: NamedEventStreamBucket, event?: MessageEvent) {
+  const data: unknown = event ? parseStreamData<unknown>(event) : undefined;
+  Array.from(bucket.subscribers).forEach((listener) => {
+    try {
+      listener(data);
+    } catch {
+      // Subscriber errors must not break fan-out to other subscribers.
+    }
+  });
+}
+
+function subscribeSharedNamedEventStream<T>(
+  url: string,
+  eventName: string,
+  onMessage: (data?: T) => void,
+): StreamSubscription {
   if (typeof EventSource === 'undefined') {
-    return {
-      unsubscribe: () => {},
-    };
+    return { unsubscribe: () => {} };
   }
 
-  const source = new EventSource(url, { withCredentials: true });
-  const handleMessage = (event?: MessageEvent) => {
-    onMessage(event ? parseStreamData<T>(event) : undefined);
-  };
-
-  if (typeof source.addEventListener === 'function') {
-    source.addEventListener(eventName, handleMessage as EventListener);
+  let bucket = sharedNamedEventStreams.get(url);
+  if (!bucket) {
+    const source = new EventSource(url, { withCredentials: true });
+    const created: NamedEventStreamBucket = { source, subscribers: new Set() };
+    const handle = (evt?: MessageEvent) => dispatchNamedEventStream(created, evt);
+    if (typeof source.addEventListener === 'function') {
+      source.addEventListener(eventName, handle as EventListener);
+    }
+    source.onmessage = handle;
+    bucket = created;
+    sharedNamedEventStreams.set(url, bucket);
   }
-  source.onmessage = handleMessage;
+
+  const wrapped = onMessage as (data?: unknown) => void;
+  bucket.subscribers.add(wrapped);
+  let active = true;
 
   return {
     unsubscribe: () => {
-      source.close();
+      if (!active) {
+        return;
+      }
+      active = false;
+      const current = sharedNamedEventStreams.get(url);
+      if (!current) {
+        return;
+      }
+      current.subscribers.delete(wrapped);
+      if (current.subscribers.size === 0) {
+        sharedNamedEventStreams.delete(url);
+        current.source.close();
+      }
     },
   };
 }
 
 export function subscribeTelemetryStream(deviceId: string, onMessage: (entry?: TelemetryEntry) => void): StreamSubscription {
-  return subscribeStream<TelemetryEntry>(`/v1/logs/stream?deviceId=${encodeURIComponent(deviceId)}`, 'telemetry', onMessage);
+  const url = `/v1/logs/stream?deviceId=${encodeURIComponent(deviceId)}`;
+  return subscribeSharedNamedEventStream<TelemetryEntry>(url, 'telemetry', onMessage);
 }
 
 export function subscribeTransfersStream(deviceId: string, onMessage: (entry?: TransferEntry) => void): StreamSubscription {
-  return subscribeStream<TransferEntry>(`/v1/file-transfers/stream?deviceId=${encodeURIComponent(deviceId)}`, 'file_transfer', onMessage);
+  const url = `/v1/file-transfers/stream?deviceId=${encodeURIComponent(deviceId)}`;
+  return subscribeSharedNamedEventStream<TransferEntry>(url, 'file_transfer', onMessage);
 }
 
 export function subscribeCommandsStream(deviceId: string, onMessage: () => void): StreamSubscription {
-  return subscribeStream(`/v1/commands/stream?deviceId=${encodeURIComponent(deviceId)}`, 'command', () => onMessage());
+  const url = `/v1/commands/stream?deviceId=${encodeURIComponent(deviceId)}`;
+  return subscribeSharedNamedEventStream(url, 'command', () => {
+    onMessage();
+  });
 }
 
 export type DeviceStatusChangeEvent = {
@@ -715,33 +761,76 @@ export type DeviceStatusChangeEvent = {
   lastSeenAt: string;
 };
 
+const DEVICES_STREAM_URL = '/v1/devices/stream';
+
+type DevicesStreamBucket = {
+  source: EventSource;
+  subscribers: Set<(event?: DeviceStatusChangeEvent) => void>;
+};
+
+const sharedDevicesStream = new Map<string, DevicesStreamBucket>();
+
+function dispatchDevicesStreamEvent(bucket: DevicesStreamBucket, raw: MessageEvent) {
+  try {
+    const payload = JSON.parse(raw.data) as DeviceStatusChangeEvent;
+    const normalized = {
+      ...payload,
+      id: payload.id ?? payload.deviceId ?? '',
+    };
+    Array.from(bucket.subscribers).forEach((listener) => {
+      try {
+        listener(normalized);
+      } catch {
+        /* isolate */
+      }
+    });
+  } catch {
+    Array.from(bucket.subscribers).forEach((listener) => {
+      try {
+        listener(undefined);
+      } catch {
+        /* isolate */
+      }
+    });
+  }
+}
+
 export function subscribeDevicesStream(onMessage: (event?: DeviceStatusChangeEvent) => void): StreamSubscription {
   if (typeof EventSource === 'undefined') {
     return { unsubscribe: () => {} };
   }
 
-  const source = new EventSource('/v1/devices/stream', { withCredentials: true });
-
-  const handleEvent = (event: MessageEvent) => {
-    try {
-      const payload = JSON.parse(event.data) as DeviceStatusChangeEvent;
-      onMessage({
-        ...payload,
-        id: payload.id ?? payload.deviceId ?? '',
-      });
-    } catch {
-      onMessage(undefined);
+  let bucket = sharedDevicesStream.get(DEVICES_STREAM_URL);
+  if (!bucket) {
+    const source = new EventSource(DEVICES_STREAM_URL, { withCredentials: true });
+    const created: DevicesStreamBucket = { source, subscribers: new Set() };
+    const handleEvent = (event: MessageEvent) => dispatchDevicesStreamEvent(created, event);
+    if (typeof source.addEventListener === 'function') {
+      source.addEventListener('device-connected', handleEvent as EventListener);
+      source.addEventListener('device-disconnected', handleEvent as EventListener);
     }
-  };
-
-  if (typeof source.addEventListener === 'function') {
-    source.addEventListener('device-connected', handleEvent as EventListener);
-    source.addEventListener('device-disconnected', handleEvent as EventListener);
+    bucket = created;
+    sharedDevicesStream.set(DEVICES_STREAM_URL, bucket);
   }
+
+  bucket.subscribers.add(onMessage);
+  let active = true;
 
   return {
     unsubscribe: () => {
-      source.close();
+      if (!active) {
+        return;
+      }
+      active = false;
+      const current = sharedDevicesStream.get(DEVICES_STREAM_URL);
+      if (!current) {
+        return;
+      }
+      current.subscribers.delete(onMessage);
+      if (current.subscribers.size === 0) {
+        sharedDevicesStream.delete(DEVICES_STREAM_URL);
+        current.source.close();
+      }
     },
   };
 }

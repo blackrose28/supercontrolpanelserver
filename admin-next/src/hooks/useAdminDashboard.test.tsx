@@ -966,6 +966,85 @@ describe('useAdminDashboard', () => {
   });
 
 
+  it('keeps the telemetry SSE open when toggling between runtime and telemetry tabs', async () => {
+    const eventSourceInstances: Array<{ url: string; close: ReturnType<typeof vi.fn> }> = [];
+    const eventSourceCtor = vi.fn(function(this: { onmessage: null | (() => void) }, url: string) {
+      this.onmessage = null;
+      const instance = { url, close: vi.fn() };
+      eventSourceInstances.push(instance);
+      return { addEventListener: () => {}, close: instance.close };
+    });
+    vi.stubGlobal('EventSource', eventSourceCtor as unknown as typeof EventSource);
+
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
+      if (url === '/v1/devices/dev-1') return Promise.resolve({ ok: true, json: async () => ({ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }) });
+      if (url === '/v1/device-summary?deviceId=dev-1') return Promise.resolve({ ok: true, json: async () => ({ deviceId: 'dev-1', updatedAt: '2026-04-20T00:00:00.000Z', functions: {}, inventory: { servers: [] } }) });
+      if (url === '/v1/logs?deviceId=dev-1&limit=100') return Promise.resolve({ ok: true, json: async () => ({ events: [] }) });
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<HookHarness />);
+    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab runtime' }));
+
+    await waitFor(() => {
+      expect(eventSourceInstances.some((instance) => instance.url.includes('/v1/logs/stream'))).toBe(true);
+    });
+
+    const telemetryInstances = () => eventSourceInstances.filter((instance) => instance.url.includes('/v1/logs/stream'));
+    const initialTelemetryCount = telemetryInstances().length;
+    const firstTelemetry = telemetryInstances()[0];
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab telemetry' }));
+    await waitFor(() => expect(screen.getByText('Active workspace tab: telemetry')).toBeInTheDocument());
+
+    expect(firstTelemetry?.close).not.toHaveBeenCalled();
+    expect(telemetryInstances().length).toBe(initialTelemetryCount);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab runtime' }));
+    await waitFor(() => expect(screen.getByText('Active workspace tab: runtime')).toBeInTheDocument());
+
+    expect(firstTelemetry?.close).not.toHaveBeenCalled();
+    expect(telemetryInstances().length).toBe(initialTelemetryCount);
+  });
+
+  it('closes the telemetry SSE when leaving runtime/telemetry for an unrelated tab', async () => {
+    const eventSourceInstances: Array<{ url: string; close: ReturnType<typeof vi.fn> }> = [];
+    const eventSourceCtor = vi.fn(function(this: { onmessage: null | (() => void) }, url: string) {
+      this.onmessage = null;
+      const instance = { url, close: vi.fn() };
+      eventSourceInstances.push(instance);
+      return { addEventListener: () => {}, close: instance.close };
+    });
+    vi.stubGlobal('EventSource', eventSourceCtor as unknown as typeof EventSource);
+
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [{ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }] });
+      if (url === '/v1/devices/dev-1') return Promise.resolve({ ok: true, json: async () => ({ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }) });
+      if (url === '/v1/device-summary?deviceId=dev-1') return Promise.resolve({ ok: true, json: async () => ({ deviceId: 'dev-1', updatedAt: '2026-04-20T00:00:00.000Z', functions: {}, inventory: { servers: [] } }) });
+      if (url === '/v1/logs?deviceId=dev-1&limit=20') return Promise.resolve({ ok: true, json: async () => [] });
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<HookHarness />);
+    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Select dev-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab runtime' }));
+
+    await waitFor(() => {
+      expect(eventSourceInstances.some((instance) => instance.url.includes('/v1/logs/stream'))).toBe(true);
+    });
+
+    const firstTelemetry = eventSourceInstances.find((instance) => instance.url.includes('/v1/logs/stream'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace tab logs' }));
+    await waitFor(() => expect(firstTelemetry?.close).toHaveBeenCalled());
+  });
+
   it('does not refetch runtime or logs for parsed PTY output telemetry', async () => {
     const eventSourceInstances: Array<{ listeners: Map<string, (event: MessageEvent) => void>; url: string; close: () => void }> = [];
     const eventSourceCtor = vi.fn(function(_url: string) {
@@ -1358,6 +1437,63 @@ describe('useAdminDashboard', () => {
 
     deviceStreamListeners.get('device-disconnected')?.({ data: JSON.stringify({ deviceId: 'dev-1', status: 'disconnected', lastSeenAt: '2026-04-28T01:00:00.000Z' }) } as MessageEvent);
 
+    await waitFor(() => expect(screen.getByText('disconnected')).toBeInTheDocument());
+  });
+
+  it('does not reopen the devices stream when selecting different devices', async () => {
+    const deviceStreamUrls: string[] = [];
+    const deviceStreamCloses: Array<ReturnType<typeof vi.fn>> = [];
+    const deviceStreamListeners = new Map<string, (event: MessageEvent) => void>();
+    const eventSourceCtor = vi.fn(function(this: { onmessage: null | (() => void) }, url: string) {
+      this.onmessage = null;
+      if (url === '/v1/devices/stream') {
+        deviceStreamUrls.push(url);
+        const close = vi.fn();
+        deviceStreamCloses.push(close);
+        return {
+          addEventListener: (name: string, handler: EventListener) => {
+            deviceStreamListeners.set(name, handler as (event: MessageEvent) => void);
+          },
+          close,
+        };
+      }
+      return {
+        addEventListener: () => {},
+        onmessage: null,
+        close: vi.fn(),
+      };
+    });
+    vi.stubGlobal('EventSource', eventSourceCtor as unknown as typeof EventSource);
+
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/v1/devices') return Promise.resolve({ ok: true, json: async () => [
+        { id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null },
+        { id: 'dev-2', name: 'Device Two', status: 'connected', os: 'linux', lastSeenAt: null },
+      ] });
+      if (url === '/v1/devices/dev-1') return Promise.resolve({ ok: true, json: async () => ({ id: 'dev-1', name: 'Device One', status: 'connected', os: 'linux', lastSeenAt: null }) });
+      if (url === '/v1/devices/dev-2') return Promise.resolve({ ok: true, json: async () => ({ id: 'dev-2', name: 'Device Two', status: 'connected', os: 'linux', lastSeenAt: null }) });
+      return Promise.resolve({ ok: true, json: async () => ({ items: [] }) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<HookHarness />);
+    await waitFor(() => expect(screen.getByText('Device One')).toBeInTheDocument());
+
+    expect(deviceStreamUrls.length).toBe(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Device One' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(deviceStreamUrls.length).toBe(1);
+    expect(deviceStreamCloses[0]).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Device Two' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(deviceStreamUrls.length).toBe(1);
+    expect(deviceStreamCloses[0]).not.toHaveBeenCalled();
+
+    deviceStreamListeners.get('device-disconnected')?.({ data: JSON.stringify({ deviceId: 'dev-2', status: 'disconnected', lastSeenAt: '2026-04-28T01:00:00.000Z' }) } as MessageEvent);
     await waitFor(() => expect(screen.getByText('disconnected')).toBeInTheDocument());
   });
 

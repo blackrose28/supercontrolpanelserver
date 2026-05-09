@@ -675,6 +675,107 @@ describe('adminApi', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+  it('subscribeTelemetryStream shares a single EventSource across subscribers for the same deviceId', () => {
+    const close = vi.fn();
+    const listeners = new Map<string, (event: MessageEvent) => void>();
+    const ctor = vi.fn(function(_url: string) {
+      return {
+        addEventListener: (name: string, handler: EventListener) => {
+          listeners.set(name, handler as (event: MessageEvent) => void);
+        },
+        close,
+      };
+    });
+
+    vi.stubGlobal('EventSource', ctor as unknown as typeof EventSource);
+
+    const onA = vi.fn();
+    const onB = vi.fn();
+
+    const subA = subscribeTelemetryStream('dev-shared', onA);
+    const subB = subscribeTelemetryStream('dev-shared', onB);
+
+    expect(ctor).toHaveBeenCalledTimes(1);
+
+    listeners.get('telemetry')?.({ data: JSON.stringify({ id: 'evt-1', type: 'inventory' }) } as MessageEvent);
+    expect(onA).toHaveBeenCalledWith({ id: 'evt-1', type: 'inventory' });
+    expect(onB).toHaveBeenCalledWith({ id: 'evt-1', type: 'inventory' });
+
+    subA.unsubscribe();
+    expect(close).not.toHaveBeenCalled();
+
+    listeners.get('telemetry')?.({ data: JSON.stringify({ id: 'evt-2', type: 'inventory' }) } as MessageEvent);
+    expect(onA).toHaveBeenCalledTimes(1);
+    expect(onB).toHaveBeenCalledTimes(2);
+    expect(onB).toHaveBeenLastCalledWith({ id: 'evt-2', type: 'inventory' });
+
+    subB.unsubscribe();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('subscribeTelemetryStream opens a fresh EventSource after the last subscriber unsubscribes', () => {
+    const close = vi.fn();
+    const ctor = vi.fn(function(this: { onmessage: null | (() => void) }) {
+      this.onmessage = null;
+      return { close };
+    });
+
+    vi.stubGlobal('EventSource', ctor as unknown as typeof EventSource);
+
+    const subA = subscribeTelemetryStream('dev-recycle', vi.fn());
+    subA.unsubscribe();
+    expect(close).toHaveBeenCalledTimes(1);
+
+    const subB = subscribeTelemetryStream('dev-recycle', vi.fn());
+    expect(ctor).toHaveBeenCalledTimes(2);
+
+    subB.unsubscribe();
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it('subscribeTelemetryStream opens distinct EventSources for different deviceIds', () => {
+    const close = vi.fn();
+    const ctor = vi.fn(function(this: { onmessage: null | (() => void) }) {
+      this.onmessage = null;
+      return { close };
+    });
+
+    vi.stubGlobal('EventSource', ctor as unknown as typeof EventSource);
+
+    const subA = subscribeTelemetryStream('dev-a', vi.fn());
+    const subB = subscribeTelemetryStream('dev-b', vi.fn());
+
+    expect(ctor).toHaveBeenCalledTimes(2);
+    expect(ctor).toHaveBeenNthCalledWith(1, '/v1/logs/stream?deviceId=dev-a', { withCredentials: true });
+    expect(ctor).toHaveBeenNthCalledWith(2, '/v1/logs/stream?deviceId=dev-b', { withCredentials: true });
+
+    subA.unsubscribe();
+    subB.unsubscribe();
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it('subscribeTelemetryStream tolerates unsubscribing the same subscription twice', () => {
+    const close = vi.fn();
+    const ctor = vi.fn(function(this: { onmessage: null | (() => void) }) {
+      this.onmessage = null;
+      return { close };
+    });
+
+    vi.stubGlobal('EventSource', ctor as unknown as typeof EventSource);
+
+    const onA = vi.fn();
+    const onB = vi.fn();
+    const subA = subscribeTelemetryStream('dev-twice', onA);
+    const subB = subscribeTelemetryStream('dev-twice', onB);
+
+    subA.unsubscribe();
+    subA.unsubscribe();
+    expect(close).not.toHaveBeenCalled();
+
+    subB.unsubscribe();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it('subscribeTransfersStream opens stream and unsubscribes', async () => {
     const close = vi.fn();
     const ctor = vi.fn(function(this: { onmessage: null | (() => void) }) {
@@ -719,6 +820,80 @@ describe('adminApi', () => {
 
     expect(onMessage).toHaveBeenCalledWith({ transferId: 'tr-1', percent: 52 });
     sub.unsubscribe();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('subscribeTransfersStream shares a single EventSource across subscribers for the same deviceId', () => {
+    const close = vi.fn();
+    const listeners = new Map<string, (event: MessageEvent) => void>();
+    const ctor = vi.fn(function(_url: string) {
+      return {
+        addEventListener: (name: string, handler: EventListener) => {
+          listeners.set(name, handler as (event: MessageEvent) => void);
+        },
+        close,
+      };
+    });
+
+    vi.stubGlobal('EventSource', ctor as unknown as typeof EventSource);
+
+    const onA = vi.fn();
+    const onB = vi.fn();
+
+    const subA = subscribeTransfersStream('dev-shared', onA);
+    const subB = subscribeTransfersStream('dev-shared', onB);
+
+    expect(ctor).toHaveBeenCalledTimes(1);
+
+    listeners.get('file_transfer')?.({ data: JSON.stringify({ transferId: 'tr-1', percent: 10 }) } as MessageEvent);
+    expect(onA).toHaveBeenCalledWith({ transferId: 'tr-1', percent: 10 });
+    expect(onB).toHaveBeenCalledWith({ transferId: 'tr-1', percent: 10 });
+
+    subA.unsubscribe();
+    expect(close).not.toHaveBeenCalled();
+
+    listeners.get('file_transfer')?.({ data: JSON.stringify({ transferId: 'tr-2', percent: 20 }) } as MessageEvent);
+    expect(onA).toHaveBeenCalledTimes(1);
+    expect(onB).toHaveBeenCalledTimes(2);
+
+    subB.unsubscribe();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('subscribeCommandsStream shares a single EventSource across subscribers for the same deviceId', () => {
+    const close = vi.fn();
+    const listeners = new Map<string, (event: MessageEvent) => void>();
+    const ctor = vi.fn(function(_url: string) {
+      return {
+        addEventListener: (name: string, handler: EventListener) => {
+          listeners.set(name, handler as (event: MessageEvent) => void);
+        },
+        close,
+      };
+    });
+
+    vi.stubGlobal('EventSource', ctor as unknown as typeof EventSource);
+
+    const onA = vi.fn();
+    const onB = vi.fn();
+
+    const subA = subscribeCommandsStream('dev-shared', onA);
+    const subB = subscribeCommandsStream('dev-shared', onB);
+
+    expect(ctor).toHaveBeenCalledTimes(1);
+
+    listeners.get('command')?.({ data: '{}' } as MessageEvent);
+    expect(onA).toHaveBeenCalledTimes(1);
+    expect(onB).toHaveBeenCalledTimes(1);
+
+    subA.unsubscribe();
+    expect(close).not.toHaveBeenCalled();
+
+    listeners.get('command')?.({ data: '{}' } as MessageEvent);
+    expect(onA).toHaveBeenCalledTimes(1);
+    expect(onB).toHaveBeenCalledTimes(2);
+
+    subB.unsubscribe();
     expect(close).toHaveBeenCalledTimes(1);
   });
 
@@ -801,5 +976,42 @@ describe('adminApi', () => {
     expect(onMessage).toHaveBeenCalledWith({ id: 'dev-2', deviceId: 'dev-2', status: 'disconnected', lastSeenAt: '2026-04-28T01:00:00.000Z' });
 
     sub.unsubscribe();
+  });
+
+  it('subscribeDevicesStream shares a single EventSource across subscribers', () => {
+    const close = vi.fn();
+    const listeners = new Map<string, (event: MessageEvent) => void>();
+    const ctor = vi.fn(function(_url: string) {
+      return {
+        addEventListener: (name: string, handler: EventListener) => {
+          listeners.set(name, handler as (event: MessageEvent) => void);
+        },
+        close,
+      };
+    });
+
+    vi.stubGlobal('EventSource', ctor as unknown as typeof EventSource);
+
+    const onA = vi.fn();
+    const onB = vi.fn();
+
+    const subA = subscribeDevicesStream(onA);
+    const subB = subscribeDevicesStream(onB);
+
+    expect(ctor).toHaveBeenCalledTimes(1);
+
+    listeners.get('device-connected')?.({ data: JSON.stringify({ deviceId: 'dev-1', status: 'connected', lastSeenAt: '2026-04-28T00:00:00.000Z' }) } as MessageEvent);
+    expect(onA).toHaveBeenCalledWith({ id: 'dev-1', deviceId: 'dev-1', status: 'connected', lastSeenAt: '2026-04-28T00:00:00.000Z' });
+    expect(onB).toHaveBeenCalledWith({ id: 'dev-1', deviceId: 'dev-1', status: 'connected', lastSeenAt: '2026-04-28T00:00:00.000Z' });
+
+    subA.unsubscribe();
+    expect(close).not.toHaveBeenCalled();
+
+    listeners.get('device-disconnected')?.({ data: JSON.stringify({ deviceId: 'dev-2', status: 'disconnected', lastSeenAt: '2026-04-28T01:00:00.000Z' }) } as MessageEvent);
+    expect(onA).toHaveBeenCalledTimes(1);
+    expect(onB).toHaveBeenCalledTimes(2);
+
+    subB.unsubscribe();
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });

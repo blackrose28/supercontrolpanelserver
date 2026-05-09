@@ -1,19 +1,32 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   fetchPtySessions,
   fetchRuntimeSummary,
+  subscribeTelemetryStream,
   fetchTunnelLogs,
   requestStartServerSshPty,
   requestStartServerTunnel,
   requestStopServerTunnel,
   type RuntimeSummary,
+  type TelemetryEntry,
   type TunnelLogEntry,
 } from '../api/adminApi';
 import { SshTerminalPanel } from '../components/SshTerminalPanel';
 import { formatTimestamp } from '../utils/formatTimestamp';
 
 type ActiveTerminal = { deviceId: string; serverId: string; sessionId: string };
+
+function formatTunnelLogMessage(data: unknown): string {
+  const value = typeof data === 'string' ? data : String(data ?? '');
+  if (value.length === 0) {
+    return '[empty log payload]';
+  }
+  if (value.trim().length === 0) {
+    return `[whitespace-only log payload: ${JSON.stringify(value)}]`;
+  }
+  return value;
+}
 
 export function ServerRuntimePage() {
   const { deviceId = '', serverId = '' } = useParams();
@@ -25,6 +38,11 @@ export function ServerRuntimePage() {
   const [tunnelLogsError, setTunnelLogsError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [activeTerminal, setActiveTerminal] = useState<ActiveTerminal | null>(null);
+  const runtimeSummaryRef = useRef<RuntimeSummary | null>(null);
+
+  useEffect(() => {
+    runtimeSummaryRef.current = runtimeSummary;
+  }, [runtimeSummary]);
 
   const loadRuntime = useCallback(async () => {
     if (!deviceId || !serverId) {
@@ -53,7 +71,12 @@ export function ServerRuntimePage() {
     setTunnelLogsLoading(true);
     try {
       const payload = await fetchTunnelLogs(deviceId, serverId, 200, 0);
-      setTunnelLogs(payload.entries);
+      const newestFirstEntries = [...payload.entries].sort((left, right) => {
+        const leftTime = Date.parse(left.ts || '') || 0;
+        const rightTime = Date.parse(right.ts || '') || 0;
+        return rightTime - leftTime;
+      });
+      setTunnelLogs(newestFirstEntries);
       setTunnelLogsError(null);
     } catch (err) {
       setTunnelLogs([]);
@@ -87,6 +110,40 @@ export function ServerRuntimePage() {
   useEffect(() => {
     void Promise.all([loadRuntime(), loadTunnelLogs(), loadActiveTerminal()]);
   }, [loadRuntime, loadTunnelLogs, loadActiveTerminal]);
+
+  useEffect(() => {
+    if (!deviceId || !serverId) {
+      return;
+    }
+
+    const telemetrySub = subscribeTelemetryStream(deviceId, (entry: TelemetryEntry | undefined) => {
+      const eventType = typeof entry?.type === 'string' ? entry.type.trim().toLowerCase() : '';
+      const tunnelKey = `server-tunnel-${serverId}`;
+      const summary = runtimeSummaryRef.current;
+      const tunnelSessionId = String(summary?.functions?.[tunnelKey]?.sessionId ?? '').trim();
+      const entrySessionId = typeof entry?.sessionId === 'string' ? entry.sessionId.trim() : '';
+      const entryFunctionId = typeof entry?.functionId === 'string' ? entry.functionId.trim() : '';
+      const tunnelPtyTelemetry =
+        eventType === 'pty-output'
+        || eventType === 'pty-exit'
+        || eventType === 'pty_output'
+        || eventType === 'pty_exit';
+      if (tunnelPtyTelemetry) {
+        const matchesTunnelFunction = entryFunctionId === tunnelKey;
+        const matchesTunnelSession = Boolean(tunnelSessionId) && entrySessionId === tunnelSessionId;
+        if (matchesTunnelFunction || matchesTunnelSession) {
+          void loadTunnelLogs();
+        }
+      }
+      if (eventType === 'function-status' || eventType === 'status_snapshot' || eventType === 'inventory') {
+        void loadRuntime();
+      }
+    });
+
+    return () => {
+      telemetrySub.unsubscribe();
+    };
+  }, [deviceId, serverId, loadRuntime, loadTunnelLogs]);
 
   const selectedServer = useMemo(() => (
     runtimeSummary?.inventory?.servers?.find((server) => String(server.id || '').trim() === serverId) || null
@@ -172,34 +229,38 @@ export function ServerRuntimePage() {
         </button>
       </div>
 
-      <section aria-label="Tunnel logs" className="runtime-summary-message-card">
-        <h2>Tunnel logs</h2>
-        {tunnelLogsLoading ? <p>Loading tunnel logs…</p> : null}
-        {tunnelLogsError ? <p>{tunnelLogsError}</p> : null}
-        {!tunnelLogsLoading && tunnelLogs.length === 0 ? <p>No logs yet.</p> : null}
-        {tunnelLogs.length > 0 ? (
-          <ul className="runtime-summary-function-list">
-            {tunnelLogs.map((entry, index) => (
-              <li key={`${entry.ts || 'log'}-${index}`} className="runtime-summary-function-item">
-                <div>
-                  <strong>{formatTimestamp(entry.ts)}</strong>
-                  <p className="runtime-summary-function-message">{String(entry.data || '')}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </section>
+      <div className="runtime-summary-live-workspace">
+        <section aria-label="Tunnel logs" className="runtime-summary-message-card runtime-summary-live-pane runtime-summary-live-pane-logs">
+          <h2>Tunnel logs</h2>
+          {tunnelLogsLoading ? <p>Loading tunnel logs…</p> : null}
+          {tunnelLogsError ? <p>{tunnelLogsError}</p> : null}
+          {!tunnelLogsLoading && tunnelLogs.length === 0 ? <p>No logs yet.</p> : null}
+          {tunnelLogs.length > 0 ? (
+            <ul className="runtime-summary-function-list runtime-summary-live-log-list">
+              {tunnelLogs.map((entry, index) => (
+                <li key={`${entry.ts || 'log'}-${index}`} className="runtime-summary-function-item">
+                  <div>
+                    <strong>{formatTimestamp(entry.ts)}</strong>
+                    <p className="runtime-summary-function-message">{formatTunnelLogMessage(entry.data)}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
 
-      <SshTerminalPanel
-        title={`SSH terminal for ${serverName}`}
-        terminal={activeTerminal}
-        onTerminalClosed={(terminal) => {
-          if (activeTerminal?.sessionId === terminal.sessionId) {
-            setActiveTerminal(null);
-          }
-        }}
-      />
+        <div className="runtime-summary-live-pane runtime-summary-live-pane-terminal">
+          <SshTerminalPanel
+            title={`SSH terminal for ${serverName}`}
+            terminal={activeTerminal}
+            onTerminalClosed={(terminal) => {
+              if (activeTerminal?.sessionId === terminal.sessionId) {
+                setActiveTerminal(null);
+              }
+            }}
+          />
+        </div>
+      </div>
     </main>
   );
 }

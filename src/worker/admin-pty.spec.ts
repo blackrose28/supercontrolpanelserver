@@ -922,6 +922,75 @@ describe('Worker admin PTY WebSocket auth', () => {
   });
 
 
+  it('dispatches request_pty_scrollback on admin attach and replays device pty-scrollback to admin', async () => {
+    const OriginalResponse = globalThis.Response;
+    class TestUpgradeResponse {
+      readonly status: number;
+      readonly webSocket: unknown;
+      constructor(_body: unknown, init: { status?: number; webSocket?: unknown } = {}) {
+        this.status = init.status ?? 200;
+        this.webSocket = init.webSocket;
+      }
+    }
+    vi.stubGlobal('Response', TestUpgradeResponse as any);
+    const listeners = new Map<string, (event: { data?: unknown }) => unknown>();
+    const clientSocket = { client: true };
+    const serverSocket = {
+      accept: vi.fn(),
+      send: vi.fn(),
+      addEventListener: vi.fn((type: string, listener: (event: { data?: unknown }) => unknown) => listeners.set(type, listener)),
+    };
+    vi.stubGlobal('WebSocketPair', vi.fn(function(this: unknown) { return [clientSocket, serverSocket]; }) as any);
+    const env = await createEnv();
+    env.CC_AGENT_DO = new FakeDurableObjectNamespace();
+    const sessions = new D1PtySessionStore(env.CC_DB);
+    await sessions.createOpening({ id: 'row-pty-scroll', sessionId: 'pty-scroll', deviceId: 'dev-1', openedAt: '2026-04-29T00:00:00.000Z' });
+    await sessions.markOpen('pty-scroll', '2026-04-29T00:00:01.000Z');
+
+    try {
+      await worker.fetch(wsRequest({ authorization: 'Bearer admin-token' }), env as any);
+      await listeners.get('message')?.({ data: JSON.stringify({ type: 'pty_attach', sessionId: 'pty-scroll' }) });
+
+      expect(env.CC_AGENT_DO.requests.length).toBeGreaterThanOrEqual(1);
+      const scrollDispatch = await env.CC_AGENT_DO.requests[env.CC_AGENT_DO.requests.length - 1].request.json() as any;
+      expect(scrollDispatch.type).toBe('request_pty_scrollback');
+      expect(scrollDispatch.payload).toMatchObject({ sessionId: 'pty-scroll' });
+
+      const agentSocket = { deserializeAttachment: () => ({ deviceId: 'dev-1' }), send: vi.fn() };
+      const durableObject = new AgentConnectionDurableObject({} as any, env as any);
+      await durableObject.webSocketMessage(agentSocket as any, JSON.stringify({
+        type: 'pty-scrollback',
+        deviceId: 'dev-1',
+        seq: 42,
+        payload: {
+          sessionId: 'pty-scroll',
+          data: 'uname -a\nLinux box\n',
+          truncated: false,
+        },
+      }));
+
+      const sent = serverSocket.send.mock.calls.map((c) => JSON.parse(String(c[0])));
+      const attachedIdx = sent.findIndex((m) => m.type === 'pty_attached');
+      const replayIdx = sent.findIndex((m) => m.type === 'pty_output' && m.payload?.replay === true);
+      expect(attachedIdx).toBeGreaterThanOrEqual(0);
+      expect(replayIdx).toBeGreaterThanOrEqual(0);
+      expect(attachedIdx).toBeLessThan(replayIdx);
+      expect(sent[replayIdx]).toMatchObject({
+        type: 'pty_output',
+        payload: {
+          sessionId: 'pty-scroll',
+          deviceId: 'dev-1',
+          data: 'uname -a\nLinux box\n',
+          replay: true,
+          truncated: false,
+        },
+      });
+    } finally {
+      vi.stubGlobal('Response', OriginalResponse);
+    }
+  });
+
+
   it('fans out pty-output from DO to admin WS via internal relay endpoint', async () => {
     const OriginalResponse = globalThis.Response;
     class TestUpgradeResponse {

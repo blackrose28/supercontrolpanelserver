@@ -9,6 +9,9 @@ export interface WorkerPtySessionRecord {
   sessionId: string;
   deviceId: string;
   state: WorkerPtySessionState;
+  kind: string;
+  serverId: string | null;
+  localSessionId: string | null;
   openedByActorType: string | null;
   openedByActorId: string | null;
   attachedActorType: string | null;
@@ -62,11 +65,15 @@ function parseJsonValue(value: unknown): unknown {
 }
 
 function mapPtyRow(row: Record<string, unknown>): WorkerPtySessionRecord {
+  const kindRaw = nullableString(row.kind);
   return {
     id: String(row.id),
     sessionId: String(row.sessionId),
     deviceId: String(row.deviceId),
     state: String(row.state) as WorkerPtySessionState,
+    kind: kindRaw && kindRaw.trim() ? kindRaw : 'generic',
+    serverId: nullableString(row.serverId),
+    localSessionId: nullableString(row.localSessionId),
     openedByActorType: nullableString(row.openedByActorType),
     openedByActorId: nullableString(row.openedByActorId),
     attachedActorType: nullableString(row.attachedActorType),
@@ -115,6 +122,9 @@ export class D1PtySessionStore {
     id: string;
     sessionId: string;
     deviceId: string;
+    kind?: string | null;
+    serverId?: string | null;
+    localSessionId?: string | null;
     cols?: number | null;
     rows?: number | null;
     openedAt: string;
@@ -124,12 +134,16 @@ export class D1PtySessionStore {
     attachedActorType?: string | null;
     attachedActorId?: string | null;
   }): Promise<WorkerPtySessionRecord> {
+    const kind = typeof input.kind === 'string' && input.kind.trim() ? input.kind.trim() : 'generic';
+    const serverId = typeof input.serverId === 'string' && input.serverId.trim() ? input.serverId.trim() : null;
+    const localSessionId = typeof input.localSessionId === 'string' && input.localSessionId.trim() ? input.localSessionId.trim() : null;
     await this.db.prepare(`
       INSERT INTO pty_sessions (
         id, sessionId, deviceId, state, openedByActorType, openedByActorId,
-        attachedActorType, attachedActorId, recordingEnabled, cols, rows, openedAt, lastAttachedAt
+        attachedActorType, attachedActorId, recordingEnabled, cols, rows, openedAt, lastAttachedAt,
+        kind, serverId, localSessionId
       )
-      VALUES (?, ?, ?, 'opening', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, 'opening', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(sessionId) DO UPDATE SET
         deviceId = excluded.deviceId,
         state = 'opening',
@@ -142,6 +156,9 @@ export class D1PtySessionStore {
         rows = excluded.rows,
         openedAt = excluded.openedAt,
         lastAttachedAt = excluded.lastAttachedAt,
+        kind = excluded.kind,
+        serverId = excluded.serverId,
+        localSessionId = excluded.localSessionId,
         lastDetachedAt = NULL,
         closedAt = NULL,
         expiredAt = NULL,
@@ -161,14 +178,23 @@ export class D1PtySessionStore {
       input.rows ?? null,
       input.openedAt,
       input.attachedActorType ? input.openedAt : null,
+      kind,
+      serverId,
+      localSessionId,
     ).run();
     return this.getRequired(input.sessionId);
   }
 
-  async markOpen(sessionId: string, ts: string): Promise<WorkerPtySessionRecord> {
-    await this.db.prepare(`UPDATE pty_sessions SET state = 'open', lastAttachedAt = COALESCE(lastAttachedAt, ?), failureCode = NULL, failureDetail = NULL WHERE sessionId = ?`)
-      .bind(ts, sessionId)
-      .run();
+  async markOpen(sessionId: string, ts: string, localSessionId?: string | null): Promise<WorkerPtySessionRecord> {
+    await this.db.prepare(`
+      UPDATE pty_sessions SET
+        state = 'open',
+        lastAttachedAt = COALESCE(lastAttachedAt, ?),
+        failureCode = NULL,
+        failureDetail = NULL,
+        localSessionId = COALESCE(?, localSessionId)
+      WHERE sessionId = ?
+    `).bind(ts, localSessionId ?? null, sessionId).run();
     return this.getRequired(sessionId);
   }
 

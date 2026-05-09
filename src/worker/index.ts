@@ -307,6 +307,9 @@ async function updateCommandFromAgentResponse(db: any, env: WorkerEnv, deviceId:
   if (type === 'ack') {
     const updated = await commands.markExecuting(command.commandId, ts);
     await markPtySessionOpenForAgentAck(db, env, deviceId, updated, envelope.payload, ts);
+    if (updated.commandType === 'request_pty_scrollback') {
+      await commands.markSucceeded(command.commandId, null, ts);
+    }
     await commands.appendAuditIfMissing({
       id: makeUuid(env),
       commandId: command.commandId,
@@ -502,6 +505,25 @@ async function handleAgentSocketMessage(db: any, env: WorkerEnv, deviceId: strin
     return;
   }
 
+  if (type === 'pty-scrollback') {
+    const sessionId = typeof payload.sessionId === 'string'
+      ? payload.sessionId
+      : (typeof envelope.sessionId === 'string' ? envelope.sessionId : '');
+    const data = typeof payload.data === 'string' ? payload.data : '';
+    const truncated = payload.truncated === true;
+    if (sessionId) {
+      relayPtyToAdminSubscribers(env, sessionId, 'pty_output', {
+        sessionId,
+        deviceId,
+        data,
+        replay: true,
+        truncated,
+      });
+    }
+    sendAgentAck(socket, envelope.seq);
+    return;
+  }
+
   if (type === 'command_status') {
     await updateCommandFromAgentStatus(db, env, deviceId, envelope);
     sendAgentAck(socket, envelope.seq);
@@ -531,14 +553,14 @@ async function handleAgentSocketMessage(db: any, env: WorkerEnv, deviceId: strin
     const sessionId = typeof envelope.sessionId === 'string'
       ? envelope.sessionId
       : (typeof payload.sessionId === 'string' ? payload.sessionId : '');
-    const data = typeof envelope.data === 'string'
+    const outputChunk = typeof envelope.data === 'string'
       ? envelope.data
       : (typeof payload.data === 'string' ? payload.data : '');
     if (sessionId) {
       const ts = typeof envelope.ts === 'string' && envelope.ts.trim() ? envelope.ts : new Date(nowMs(env)).toISOString();
       await new D1PtySessionStore(db).noteOutput(sessionId, ts);
-      await appendAgentTelemetry(db, env, deviceId, envelope, { type: 'pty-output', sessionId, payload: envelope.payload ?? { data } });
-      relayPtyToAdminSubscribers(env, sessionId, 'pty_output', { sessionId, deviceId, data });
+      await appendAgentTelemetry(db, env, deviceId, envelope, { type: 'pty-output', sessionId, payload: envelope.payload ?? { data: outputChunk } });
+      relayPtyToAdminSubscribers(env, sessionId, 'pty_output', { sessionId, deviceId, data: outputChunk });
     }
     sendAgentAck(socket, envelope.seq);
     return;
@@ -675,6 +697,8 @@ function agentDurableObjectStub(env: WorkerEnv, deviceId: string): { fetch: (req
 
 function agentEnvelopeTypeForCommand(commandType: string): string {
   switch (commandType) {
+    case 'request_pty_scrollback':
+      return 'request_pty_scrollback';
     case 'restart_openvpn':
       return 'request_restart_openvpn';
     case 'restart_boundary_auth':
@@ -1194,6 +1218,22 @@ async function handleAdminPtyMessage(input: {
         details: {},
       });
       websocketSend(input.socket, 'pty_attached', { sessionId, deviceId: attached.deviceId });
+      const scrollbackNow = new Date(nowMs(input.env)).toISOString();
+      const commands = new D1CommandStore(input.db);
+      let scrollCommand = await commands.createQueuedCommand({
+        id: makeUuid(input.env),
+        commandId: makeUuid(input.env),
+        deviceId: attached.deviceId,
+        commandType: 'request_pty_scrollback',
+        actorType,
+        actorId,
+        payload: { sessionId },
+        payloadSummary: `PTY scrollback ${sessionId}`,
+        submittedAt: scrollbackNow,
+      });
+      const scrollReqSeq = await commands.nextReqSeq(attached.deviceId);
+      scrollCommand = await commands.markDispatched(scrollCommand.commandId, scrollReqSeq, scrollbackNow);
+      await notifyAgentDurableObject(input.env, attached.deviceId, publicCommand(scrollCommand), scrollbackNow);
       return;
     }
     const detached = await sessions.detach(sessionId, now);
@@ -1848,9 +1888,11 @@ async function handleListPtySessions(request: Request, env: WorkerEnv, deviceId:
   const items = await Promise.all(sessions.map(async (session) => {
     const command = await commands.getCommand(session.sessionId);
     const payload = command?.payload && typeof command.payload === 'object' ? command.payload as Record<string, unknown> : {};
-    const serverId = ['start_server_ssh', 'request_attach_server_ssh'].includes(command?.commandType ?? '') && typeof payload.serverId === 'string' && payload.serverId.trim()
+    const serverIdFromCommand = ['start_server_ssh', 'request_attach_server_ssh'].includes(command?.commandType ?? '') && typeof payload.serverId === 'string' && payload.serverId.trim()
       ? payload.serverId.trim()
       : null;
+    const rowServerId = session.serverId && session.serverId.trim() ? session.serverId.trim() : null;
+    const serverId = rowServerId ?? serverIdFromCommand;
     return serverId ? { ...session, serverId } : session;
   }));
   return jsonResponse({ items });
