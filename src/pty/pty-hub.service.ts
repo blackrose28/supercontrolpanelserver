@@ -111,6 +111,11 @@ export class PtyHubService {
 
   broadcast(sessionId: string, message: unknown) {
     const clients = this.sessionClients.get(sessionId);
+    const subscriberCount = clients?.size ?? 0;
+    const msgType = (message as { type?: unknown })?.type;
+    console.log(
+      `[PTY-TRACE] pty-hub.broadcast sessionId=${sessionId} type=${typeof msgType === 'string' ? msgType : 'unknown'} subscribers=${subscriberCount}`,
+    );
     if (!clients?.size) {
       return;
     }

@@ -222,7 +222,7 @@ describe('Worker agent polling (D1 mode)', () => {
       agentAck: null,
     });
     expect(typeof body.sessionId).toBe('string');
-    expect(body.sessionId).toMatch(/^server-ssh-srv-1-[0-9a-f-]+$/);
+    expect(body.sessionId).toMatch(/^ccpty:dev-1:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     await expect(new D1PtySessionStore(env.CC_DB).get(body.sessionId)).resolves.toMatchObject({
       deviceId: 'dev-1',
       sessionId: body.sessionId,
@@ -267,7 +267,7 @@ describe('Worker agent polling (D1 mode)', () => {
       agentAck: null,
     });
     expect(typeof body.sessionId).toBe('string');
-    expect(body.sessionId).toMatch(/^server-ssh-srv-1-[0-9a-f-]+$/);
+    expect(body.sessionId).toBe('ccpty:dev-1:local-ssh-session-1');
     await expect(new D1PtySessionStore(env.CC_DB).get(body.sessionId)).resolves.toMatchObject({
       deviceId: 'dev-1',
       sessionId: body.sessionId,

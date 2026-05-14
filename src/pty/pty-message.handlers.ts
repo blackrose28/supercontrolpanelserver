@@ -19,6 +19,7 @@ import { PtyHubService } from './pty-hub.service';
 import { PtySessionRecord, PtySessionStore } from './pty-session.store';
 import { consumeRateLimit, RateLimitBucket } from './pty-rate-limit';
 import { PtyAuditStore } from './pty-audit.store';
+import { newServerSshStartSessionId } from './ccPtySessionId';
 
 export type PtyHandlerDeps = {
   deviceStore: DeviceStore;
@@ -42,7 +43,7 @@ export function handleOpenAction(client: any, payload: Record<string, unknown>, 
   const actor = mapPrincipalToPtyActor(client.principal);
   const deviceId = requireDeviceId(payload, deps.deviceStore);
   deps.auditExpiredSessions(deps.ptySessions.expireDetachedSessions(new Date().toISOString()));
-  const sessionId = readSessionId(payload) || `pty-${randomUUID()}`;
+  const sessionId = readSessionId(payload) || newServerSshStartSessionId(deviceId);
   const cols = readPositiveInt(payload.cols, 'cols');
   const rows = readPositiveInt(payload.rows, 'rows');
   deps.ptyHub.clearScrollback(sessionId);
@@ -81,11 +82,18 @@ export function handleAttachAction(client: any, payload: Record<string, unknown>
   const actor = mapPrincipalToPtyActor(client.principal);
   const deviceId = requireDeviceId(payload, deps.deviceStore);
   deps.auditExpiredSessions(deps.ptySessions.expireDetachedSessions(new Date().toISOString()));
-  const record = requirePtySession(deps.ptySessions, deviceId, readRequiredSessionId(payload));
+  const requestedSessionId = readRequiredSessionId(payload);
+  console.log(
+    `[PTY-TRACE] admin-ws: pty_attach deviceId=${deviceId} requestedSessionId=${requestedSessionId}`,
+  );
+  const record = requirePtySession(deps.ptySessions, deviceId, requestedSessionId);
   ensureRecordingScope(client.principal, record.recordingEnabled);
   ensureActorMayAttach(record, actor.actorType, actor.actorId);
   const updated = deps.ptySessions.attach(record.sessionId, actor.actorType, actor.actorId, new Date().toISOString());
   deps.ptyHub.attachClient(client, updated.sessionId);
+  console.log(
+    `[PTY-TRACE] admin-ws: client subscribed sessionId=${updated.sessionId}`,
+  );
   deps.ptyHub.replayToClient(client, updated.sessionId);
   deps.ptyHub.send(client, {
     type: 'pty_opened',

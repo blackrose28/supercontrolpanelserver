@@ -138,7 +138,7 @@ describe('AgentGateway request methods', () => {
 
     const result = gateway.requestStartServerSsh('device-1', {
       serverId: ' srv-ssh ',
-      sessionId: 'ssh-session-1',
+      sessionId: 'ccpty:device-1:11111111-1111-4111-8111-111111111111',
       cols: 120,
       rows: 32,
       actorType: 'admin_session',
@@ -149,11 +149,11 @@ describe('AgentGateway request methods', () => {
       ok: true,
       deviceId: 'device-1',
       serverId: 'srv-ssh',
-      sessionId: 'ssh-session-1',
+      sessionId: 'ccpty:device-1:11111111-1111-4111-8111-111111111111',
       reqSeq: 1,
     });
     expect(ptySessionStore.createOpening).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'ssh-session-1',
+      sessionId: 'ccpty:device-1:11111111-1111-4111-8111-111111111111',
       deviceId: 'device-1',
       cols: 120,
       rows: 32,
@@ -163,20 +163,26 @@ describe('AgentGateway request methods', () => {
       attachedActorType: 'admin_session',
       attachedActorId: 'admin-1',
     }));
-    expect(ptySessionStore.trackPendingReq).toHaveBeenCalledWith('device-1', 1, 'ssh-session-1', 'open');
+    expect(ptySessionStore.trackPendingReq).toHaveBeenCalledWith('device-1', 1, 'ccpty:device-1:11111111-1111-4111-8111-111111111111', 'open');
 
     const sentPayload = JSON.parse(String(ws.send.mock.calls[0][0]));
     expect(sentPayload.type).toBe('request_start_server_ssh');
-    expect(sentPayload.payload).toEqual({ serverId: 'srv-ssh', sessionId: 'ssh-session-1', cols: 120, rows: 32 });
+    expect(sentPayload.payload).toEqual({
+      serverId: 'srv-ssh',
+      sessionId: 'ccpty:device-1:11111111-1111-4111-8111-111111111111',
+      cols: 120,
+      rows: 32,
+    });
   });
 
   it('requestAttachServerSsh creates an attached remote PTY session and sends local adoption request', () => {
     deviceStore.getSessionByDeviceId.mockReturnValue({ ws });
 
+    const canonicalAttach = 'ccpty:device-1:11111111-1111-4111-8111-111111111111';
     const result = gateway.requestAttachServerSsh('device-1', {
       serverId: ' srv-ssh ',
-      sessionId: 'server-ssh-srv-ssh-11111111-1111-4111-8111-111111111111',
-      localSessionId: ' local-pty-1 ',
+      sessionId: canonicalAttach,
+      localSessionId: ' 11111111-1111-4111-8111-111111111111 ',
       cols: 120,
       rows: 32,
       actorType: 'admin_session',
@@ -187,11 +193,11 @@ describe('AgentGateway request methods', () => {
       ok: true,
       deviceId: 'device-1',
       serverId: 'srv-ssh',
-      sessionId: 'server-ssh-srv-ssh-11111111-1111-4111-8111-111111111111',
+      sessionId: canonicalAttach,
       reqSeq: 1,
     });
     expect(ptySessionStore.createOpening).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'server-ssh-srv-ssh-11111111-1111-4111-8111-111111111111',
+      sessionId: canonicalAttach,
       deviceId: 'device-1',
       cols: 120,
       rows: 32,
@@ -201,14 +207,14 @@ describe('AgentGateway request methods', () => {
       attachedActorType: 'admin_session',
       attachedActorId: 'admin-1',
     }));
-    expect(ptySessionStore.trackPendingReq).toHaveBeenCalledWith('device-1', 1, 'server-ssh-srv-ssh-11111111-1111-4111-8111-111111111111', 'open');
+    expect(ptySessionStore.trackPendingReq).toHaveBeenCalledWith('device-1', 1, canonicalAttach, 'open');
 
     const sentPayload = JSON.parse(String(ws.send.mock.calls[0][0]));
     expect(sentPayload.type).toBe('request_attach_server_ssh');
     expect(sentPayload.payload).toEqual({
       serverId: 'srv-ssh',
-      sessionId: 'server-ssh-srv-ssh-11111111-1111-4111-8111-111111111111',
-      localSessionId: 'local-pty-1',
+      sessionId: canonicalAttach,
+      localSessionId: '11111111-1111-4111-8111-111111111111',
       cols: 120,
       rows: 32,
     });

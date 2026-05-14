@@ -354,6 +354,31 @@ describe('Runtime summary from function-status events', () => {
     expect(summary.functions['server-tunnel-srv-abc'].state).toBe('running');
     expect(summary.functions['server-tunnel-srv-abc'].sessionId).toBe('pty-session-123');
   });
+
+  it('prefers top-level sessionId over payload.sessionId for function-status', () => {
+    const { store, database } = createStore();
+    ensureDevice(database, 'dev-1');
+
+    store.append({
+      id: 'fs-canonical',
+      deviceId: 'dev-1',
+      type: 'function-status',
+      sessionId: 'ccpty:dev-1:local-pty-1',
+      functionId: 'server-ssh-srv-1',
+      seq: 51,
+      ts: '2026-04-23T12:01:00.000Z',
+      payload: {
+        functionId: 'server-ssh-srv-1',
+        state: 'running',
+        message: 'SSH',
+        sessionId: 'legacy-local-only',
+        updatedAtMs: 1714000000001,
+      },
+    });
+
+    const summary = store.getDeviceRuntimeSummary('dev-1');
+    expect(summary.functions['server-ssh-srv-1']?.sessionId).toBe('ccpty:dev-1:local-pty-1');
+  });
 });
 
 describe('Tunnel logs integration', () => {

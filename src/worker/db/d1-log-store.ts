@@ -1,10 +1,12 @@
 import { D1LikeDatabase } from './d1-device-store';
+import { coalesceFunctionStatusSessionId } from '../../logs/functionStatusSessionId';
 import { redactTelemetryPayload } from '../../logs/log-redaction';
 
 export type WorkerTelemetryEvent = {
   id: string;
   deviceId: string;
   type: string;
+  /** CC-plane PTY correlation id when set; prefer canonical `ccpty:{deviceId}:{localSegment}` for PTY types (see plan). */
   sessionId?: string | null;
   functionId?: string | null;
   seq: number;
@@ -122,9 +124,16 @@ export class D1LogStore {
   }
 
   async append(event: WorkerTelemetryEvent): Promise<WorkerTelemetryEvent> {
+    const payloadForCoalesce =
+      event.payload && typeof event.payload === 'object' ? (event.payload as Record<string, unknown>) : {};
+    const resolvedSessionId =
+      event.type === 'function-status'
+        ? coalesceFunctionStatusSessionId(event.sessionId, payloadForCoalesce)
+        : (event.sessionId ?? null);
+
     const sanitizedEvent: WorkerTelemetryEvent = {
       ...event,
-      sessionId: event.sessionId ?? null,
+      sessionId: resolvedSessionId,
       functionId: event.functionId ?? null,
       payload: redactTelemetryPayload(event.payload),
     };
@@ -270,27 +279,29 @@ export class D1LogStore {
   }
 
   async getLastSessionIdForFunction(deviceId: string, functionId: string): Promise<string | null> {
-    const row = await this.db.prepare(`
+    const { results = [] } = await this.db.prepare(`
       SELECT sessionId, payloadJson
       FROM telemetry_logs
-      WHERE deviceId = ? AND functionId = ? AND type = 'function-status' AND sessionId IS NOT NULL
+      WHERE deviceId = ? AND functionId = ? AND type = 'function-status'
       ORDER BY ts DESC, seq DESC
-      LIMIT 1
-    `).bind(deviceId, functionId).first<{ sessionId?: string | null; payloadJson?: string | null }>();
-    if (!row) {
-      return null;
-    }
-    if (typeof row.sessionId === 'string' && row.sessionId.trim()) {
-      return row.sessionId;
-    }
-    if (row.payloadJson) {
-      try {
-        const payload = JSON.parse(row.payloadJson);
-        if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
-          return payload.sessionId;
+      LIMIT 32
+    `).bind(deviceId, functionId).all<{ sessionId?: string | null; payloadJson?: string | null }>();
+
+    for (const row of results) {
+      let payload: Record<string, unknown> = {};
+      if (row.payloadJson) {
+        try {
+          const parsed = JSON.parse(row.payloadJson);
+          if (parsed && typeof parsed === 'object') {
+            payload = parsed as Record<string, unknown>;
+          }
+        } catch {
+          // ignore parse errors
         }
-      } catch {
-        // ignore parse errors
+      }
+      const merged = coalesceFunctionStatusSessionId(row.sessionId, payload);
+      if (merged) {
+        return merged;
       }
     }
     return null;
@@ -385,7 +396,7 @@ export class D1LogStore {
         functionId,
         state: typeof payload.state === 'string' ? payload.state : undefined,
         message: typeof payload.message === 'string' ? payload.message : undefined,
-        sessionId: typeof payload.sessionId === 'string' ? payload.sessionId : payload.sessionId == null ? null : event.sessionId ?? null,
+        sessionId: coalesceFunctionStatusSessionId(event.sessionId, payload),
         boundaryTokenSource: typeof payload.boundaryTokenSource === 'string' ? payload.boundaryTokenSource : payload.boundaryTokenSource == null ? null : undefined,
         updatedAtMs: typeof payload.updatedAtMs === 'number' ? payload.updatedAtMs : undefined,
         observedAt: event.ts,

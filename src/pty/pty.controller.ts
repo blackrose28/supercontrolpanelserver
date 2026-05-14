@@ -13,6 +13,7 @@ import { PtySessionStore } from './pty-session.store';
 import { PtyHubService } from './pty-hub.service';
 import { PtyAuditStore } from './pty-audit.store';
 import { LogStore } from '../logs/log.store';
+import { newServerSshStartSessionId, resolveServerSshAttachSessionId } from './ccPtySessionId';
 
 @Controller('v1')
 export class PtyController {
@@ -64,7 +65,7 @@ export class PtyController {
     const deviceId = this.requireDevice(id);
     this.pruneTerminalSessions();
     this.ptySessions.expireDetachedSessions(new Date().toISOString());
-    const normalizedSessionId = String(sessionId || '').trim() || `pty-${randomUUID()}`;
+    const normalizedSessionId = String(sessionId || '').trim() || newServerSshStartSessionId(deviceId);
     const normalizedCols = Number(cols);
     const normalizedRows = Number(rows);
     if (!Number.isInteger(normalizedCols) || normalizedCols < 1 || !Number.isInteger(normalizedRows) || normalizedRows < 1) {
@@ -127,7 +128,7 @@ export class PtyController {
     const actor = mapPrincipalToPtyActor(principal);
     const result = this.agentGateway.requestStartServerSsh(deviceId, {
       serverId: normalizedServerId,
-      sessionId: `server-ssh-${normalizedServerId}-${randomUUID()}`,
+      sessionId: newServerSshStartSessionId(deviceId),
       cols: normalizedCols,
       rows: normalizedRows,
       actorType: actor.actorType,
@@ -157,6 +158,7 @@ export class PtyController {
     @Param('id') id: string,
     @Body('serverId') serverId: string | undefined,
     @Body('localSessionId') localSessionId: string | undefined,
+    @Body('sessionId') clientSessionId: string | undefined,
     @Body('cols') cols: number | undefined,
     @Body('rows') rows: number | undefined,
     @Body('csrfToken') csrfToken: string | undefined,
@@ -197,7 +199,19 @@ export class PtyController {
       );
     }
     const actor = mapPrincipalToPtyActor(principal);
-    const sessionId = `server-ssh-${normalizedServerId}-${randomUUID()}`;
+    let sessionId: string;
+    try {
+      sessionId = resolveServerSshAttachSessionId(deviceId, normalizedLocalSessionId, clientSessionId);
+    } catch (err) {
+      throw new HttpException(
+        {
+          ok: false,
+          code: 'SESSION_ID_INVALID',
+          message: err instanceof Error ? err.message : 'Invalid sessionId for attach',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
     this.ptyHub.clearScrollback(sessionId);
     const result = this.agentGateway.requestAttachServerSsh(deviceId, {
       serverId: normalizedServerId,

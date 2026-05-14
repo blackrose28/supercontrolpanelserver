@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Observable, Subject, filter } from 'rxjs';
 import { DatabaseService } from '../database/database.service';
+import { coalesceFunctionStatusSessionId } from './functionStatusSessionId';
 import { redactTelemetryPayload } from './log-redaction';
 
 export type TelemetryEventType =
@@ -16,6 +17,7 @@ export interface TelemetryEvent {
   id: string;
   deviceId: string;
   type: TelemetryEventType | string;
+  /** CC-plane PTY correlation id when set; prefer canonical `ccpty:{deviceId}:{localSegment}` for PTY types (see plan). */
   sessionId?: string | null;
   functionId?: string | null;
   seq: number;
@@ -67,8 +69,16 @@ export class LogStore {
   }
 
   append(event: TelemetryEvent): TelemetryEvent {
+    const payloadForCoalesce =
+      event.payload && typeof event.payload === 'object' ? (event.payload as Record<string, unknown>) : {};
+    const resolvedSessionId =
+      event.type === 'function-status'
+        ? coalesceFunctionStatusSessionId(event.sessionId, payloadForCoalesce)
+        : (event.sessionId ?? null);
+
     const sanitizedEvent: TelemetryEvent = {
       ...event,
+      sessionId: resolvedSessionId,
       payload: redactTelemetryPayload(event.payload),
     };
 
@@ -381,7 +391,7 @@ export class LogStore {
 
 
   getLastSessionIdForFunction(deviceId: string, functionId: string): string | null {
-    const row = this.databaseService.connection
+    const rows = this.databaseService.connection
       .prepare(
         `
           SELECT sessionId, payloadJson
@@ -389,30 +399,27 @@ export class LogStore {
           WHERE deviceId = ?
             AND functionId = ?
             AND type = 'function-status'
-            AND sessionId IS NOT NULL
           ORDER BY ts DESC, seq DESC
-          LIMIT 1
+          LIMIT 32
         `,
       )
-      .get(deviceId, functionId) as { sessionId?: string | null; payloadJson?: string | null } | undefined;
+      .all(deviceId, functionId) as Array<{ sessionId?: string | null; payloadJson?: string | null }>;
 
-    if (!row) {
-      return null;
-    }
-
-    if (typeof row.sessionId === 'string' && row.sessionId.trim()) {
-      return row.sessionId;
-    }
-
-    // Fall back to payload.sessionId for telemetry-ingested events
-    if (row.payloadJson) {
-      try {
-        const payload = JSON.parse(row.payloadJson);
-        if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
-          return payload.sessionId;
+    for (const row of rows) {
+      let payload: Record<string, unknown> = {};
+      if (row.payloadJson) {
+        try {
+          const parsed = JSON.parse(row.payloadJson);
+          if (parsed && typeof parsed === 'object') {
+            payload = parsed as Record<string, unknown>;
+          }
+        } catch {
+          // ignore parse errors
         }
-      } catch {
-        // ignore parse errors
+      }
+      const merged = coalesceFunctionStatusSessionId(row.sessionId, payload);
+      if (merged) {
+        return merged;
       }
     }
 
@@ -562,12 +569,7 @@ export class LogStore {
         functionId,
         state: typeof payload.state === 'string' ? payload.state : undefined,
         message: typeof payload.message === 'string' ? payload.message : undefined,
-        sessionId:
-          typeof payload.sessionId === 'string'
-            ? payload.sessionId
-            : payload.sessionId == null
-              ? null
-              : event.sessionId ?? null,
+        sessionId: coalesceFunctionStatusSessionId(event.sessionId, payload),
         boundaryTokenSource:
           typeof payload.boundaryTokenSource === 'string'
             ? payload.boundaryTokenSource
