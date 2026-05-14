@@ -9,6 +9,7 @@
     "dev": "ts-node src/main.ts",
     "watch": "node --watch --require ts-node/register src/main.ts",
     "test": "vitest run",
+    "test:programfiles-node": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/npm-with-program-files-node.ps1 test",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "admin-next:dev": "npm --prefix admin-next run dev",

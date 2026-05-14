@@ -30,6 +30,15 @@ components:
         csrfToken:
           type: string
           description: Required if using AdminSession cookie auth
+    CcPlanePtySessionId:
+      type: string
+      description: |
+        CC-plane PTY session identifier. New server-SSH and related flows use the canonical form
+        `ccpty:{deviceId}:{localSegment}` where `localSegment` contains no `:` and `deviceId` matches
+        the authenticated device (see `docs/pty-id-breaking-change/plan.md` and `docs/cc/pty-session-id-protocol.md`).
+        Legacy opaque ids may still appear until all agents emit canonical ids. For `function-status`
+        telemetry ingest, prefer this field at the **top level** of the event over duplicating it only inside `payload`.
+      example: ccpty:dev-1:550e8400-e29b-41d4-a716-446655440000
   responses:
     Success:
       description: Successful operation
@@ -131,6 +140,9 @@ paths:
   /v1/devices/{id}/pty-sessions:
     get:
       summary: List PTY sessions for a device
+      description: >
+        Returns active PTY session rows. `sessionId` is the durable key; server-SSH sessions created through
+        current admin APIs use the canonical `ccpty:{deviceId}:{localSegment}` form (see `docs/pty-id-breaking-change/plan.md`).
       tags: [Devices, PTY]
       parameters:
         - name: id
@@ -360,7 +372,6 @@ paths:
                   properties:
                     serverId: {type: string}
                     commandId: {type: string}
-                    sessionId: {type: string}
                     cols: {type: number}
                     rows: {type: number}
       responses:
@@ -388,7 +399,12 @@ paths:
                     serverId: {type: string}
                     localSessionId: {type: string}
                     commandId: {type: string}
-                    sessionId: {type: string}
+                    sessionId:
+                      description: >
+                        Optional. When provided, must match the canonical id
+                        `ccpty:{deviceId}:{localSessionId}` for the `{id}` path device and the `localSessionId` body field.
+                      allOf:
+                        - $ref: '#/components/schemas/CcPlanePtySessionId'
                     cols: {type: number}
                     rows: {type: number}
       responses:
@@ -476,7 +492,14 @@ paths:
       requestBody:
         content:
           application/json:
-            schema: {type: object}
+            schema:
+              type: object
+              additionalProperties: true
+              description: >
+                Agent telemetry ingest (batch `events` array and/or single-event fields, depending on server build).
+                For `function-status` and other PTY-related types, set **top-level** `sessionId` to the canonical
+                `ccpty:{deviceId}:{localSegment}` when available; the control plane prefers that over `payload.sessionId`
+                when merging runtime summaries. See `docs/pty-id-breaking-change/plan.md`.
       responses:
         '200':
           $ref: '#/components/responses/Success'

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { FileTransferState } from '../file-ops/file-transfer.types';
 import { CommandRecord } from '../commands/command.store';
+import { coalesceFunctionStatusSessionId } from '../logs/functionStatusSessionId';
+import { verifyCanonicalSessionIdForDevice } from '../pty/ccPtySessionId';
 
 type PendingReqResponses = Map<
   number,
@@ -638,14 +640,23 @@ export function handleAgentFunctionStatus(input: {
   const functionId =
     typeof payload.functionId === 'string' ? payload.functionId : null;
 
+  const coalescedSessionId = coalesceFunctionStatusSessionId(
+    typeof envelope.sessionId === 'string' ? envelope.sessionId : null,
+    payload,
+  );
+  const verified = verifyCanonicalSessionIdForDevice(client.deviceId, coalescedSessionId);
+  if (!verified.ok) {
+    console.warn(
+      `Rejected function-status from ${client.deviceId}: ${verified.reason}`,
+    );
+    return;
+  }
+
   logStore.append({
     id: randomUUID(),
     deviceId: client.deviceId,
     type: 'function-status',
-    sessionId:
-      typeof payload.sessionId === 'string'
-        ? payload.sessionId
-        : client.sessionId ?? null,
+    sessionId: verified.sessionId,
     functionId,
     seq: typeof envelope.seq === 'number' ? envelope.seq : Date.now(),
     ts: envelope.ts || new Date().toISOString(),
@@ -671,12 +682,31 @@ export function handleAgentPtyOutput(input: {
   const { envelope, client, logStore, ptySessionStore, ptyHub } = input;
   const payload =
     envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
-  const sessionId =
-    typeof payload.sessionId === 'string'
-      ? payload.sessionId
-      : typeof payload.id === 'string'
-        ? payload.id
-        : client.sessionId ?? null;
+  const rawSessionId =
+    typeof envelope.sessionId === 'string' && envelope.sessionId.trim()
+      ? envelope.sessionId.trim()
+      : typeof payload.sessionId === 'string' && payload.sessionId.trim()
+        ? payload.sessionId.trim()
+        : typeof payload.id === 'string' && payload.id.trim()
+          ? payload.id.trim()
+          : typeof client.sessionId === 'string' && client.sessionId?.trim()
+            ? String(client.sessionId).trim()
+            : null;
+  console.log(
+    `[PTY-TRACE] cc-server: received pty-output deviceId=${client.deviceId} rawSessionId=${rawSessionId ?? 'null'} bytes=${typeof payload.data === 'string' ? payload.data.length : 0}`,
+  );
+
+  const verified = verifyCanonicalSessionIdForDevice(client.deviceId, rawSessionId);
+  if (!verified.ok) {
+    console.warn(
+      `[PTY-TRACE] cc-server: REJECTED pty-output from ${client.deviceId}: ${verified.reason} (rawSessionId=${rawSessionId})`,
+    );
+    return;
+  }
+  const sessionId = verified.sessionId;
+  console.log(
+    `[PTY-TRACE] cc-server: verified pty-output deviceId=${client.deviceId} sessionId=${sessionId ?? 'null'}`,
+  );
 
   logStore.append({
     id: randomUUID(),
@@ -692,6 +722,9 @@ export function handleAgentPtyOutput(input: {
     ptySessionStore.noteOutput(sessionId, envelope.ts || new Date().toISOString());
     const data = typeof payload.data === 'string' ? payload.data : '';
     ptyHub.appendOutput(sessionId, data);
+    console.log(
+      `[PTY-TRACE] cc-server: broadcasting pty-output sessionId=${sessionId} bytes=${data.length}`,
+    );
     ptyHub.broadcast(sessionId, {
       type: 'pty_output',
       payload: {
@@ -699,6 +732,10 @@ export function handleAgentPtyOutput(input: {
         sessionId,
       },
     });
+  } else {
+    console.warn(
+      `[PTY-TRACE] cc-server: pty-output verified but sessionId is null — not broadcasting`,
+    );
   }
 }
 
@@ -713,12 +750,25 @@ export function handleAgentPtyExit(input: {
   const { envelope, client, logStore, ptySessionStore, ptyAudit, ptyHub } = input;
   const payload =
     envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
-  const sessionId =
-    typeof payload.sessionId === 'string'
-      ? payload.sessionId
-      : typeof payload.id === 'string'
-        ? payload.id
-        : client.sessionId ?? null;
+  const rawSessionId =
+    typeof envelope.sessionId === 'string' && envelope.sessionId.trim()
+      ? envelope.sessionId.trim()
+      : typeof payload.sessionId === 'string' && payload.sessionId.trim()
+        ? payload.sessionId.trim()
+        : typeof payload.id === 'string' && payload.id.trim()
+          ? payload.id.trim()
+          : typeof client.sessionId === 'string' && client.sessionId?.trim()
+            ? String(client.sessionId).trim()
+            : null;
+
+  const verified = verifyCanonicalSessionIdForDevice(client.deviceId, rawSessionId);
+  if (!verified.ok) {
+    console.warn(
+      `Rejected pty-exit from ${client.deviceId}: ${verified.reason}`,
+    );
+    return;
+  }
+  const sessionId = verified.sessionId;
 
   logStore.append({
     id: randomUUID(),

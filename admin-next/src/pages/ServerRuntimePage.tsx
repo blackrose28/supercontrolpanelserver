@@ -15,7 +15,11 @@ import {
 import { SshTerminalPanel } from '../components/SshTerminalPanel';
 import { formatTimestamp } from '../utils/formatTimestamp';
 
+/** Poll tunnel logs while the tunnel is running (telemetry match can miss when CC remote session id ≠ summary session id). */
+export const TUNNEL_LOG_POLL_INTERVAL_MS = 2000;
+
 type ActiveTerminal = { deviceId: string; serverId: string; sessionId: string };
+type TunnelLogsLoadMode = 'full' | 'refresh';
 
 function formatTunnelLogMessage(data: unknown): string {
   const value = typeof data === 'string' ? data : String(data ?? '');
@@ -38,11 +42,18 @@ export function ServerRuntimePage() {
   const [tunnelLogsError, setTunnelLogsError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [activeTerminal, setActiveTerminal] = useState<ActiveTerminal | null>(null);
-  const runtimeSummaryRef = useRef<RuntimeSummary | null>(null);
+  /** Tunnel sessionId captured directly from telemetry. Updated synchronously when a
+   *  `function-status` event for this tunnel arrives, so it's available before the
+   *  async `loadRuntime()` round-trip finishes. Without this, the first pty-output
+   *  events after Start Tunnel race ahead of the summary refresh and don't match. */
+  const tunnelSessionIdRef = useRef<string>('');
 
   useEffect(() => {
-    runtimeSummaryRef.current = runtimeSummary;
-  }, [runtimeSummary]);
+    const sid = String(runtimeSummary?.functions?.[`server-tunnel-${serverId}`]?.sessionId ?? '').trim();
+    if (sid) {
+      tunnelSessionIdRef.current = sid;
+    }
+  }, [runtimeSummary, serverId]);
 
   const loadRuntime = useCallback(async () => {
     if (!deviceId || !serverId) {
@@ -63,12 +74,14 @@ export function ServerRuntimePage() {
     }
   }, [deviceId, serverId]);
 
-  const loadTunnelLogs = useCallback(async () => {
+  const loadTunnelLogs = useCallback(async (mode: TunnelLogsLoadMode = 'full') => {
     if (!deviceId || !serverId) {
       return;
     }
 
-    setTunnelLogsLoading(true);
+    if (mode === 'full') {
+      setTunnelLogsLoading(true);
+    }
     try {
       const payload = await fetchTunnelLogs(deviceId, serverId, 200, 0);
       const newestFirstEntries = [...payload.entries].sort((left, right) => {
@@ -80,9 +93,13 @@ export function ServerRuntimePage() {
       setTunnelLogsError(null);
     } catch (err) {
       setTunnelLogs([]);
-      setTunnelLogsError(err instanceof Error ? err.message : 'Failed to load tunnel logs');
+      if (mode === 'full') {
+        setTunnelLogsError(err instanceof Error ? err.message : 'Failed to load tunnel logs');
+      }
     } finally {
-      setTunnelLogsLoading(false);
+      if (mode === 'full') {
+        setTunnelLogsLoading(false);
+      }
     }
   }, [deviceId, serverId]);
 
@@ -107,9 +124,26 @@ export function ServerRuntimePage() {
     }
   }, [deviceId, serverId]);
 
+  const selectedServer = useMemo(() => (
+    runtimeSummary?.inventory?.servers?.find((server) => String(server.id || '').trim() === serverId) || null
+  ), [runtimeSummary, serverId]);
+  const serverName = String(selectedServer?.name || serverId || 'Server');
+  const tunnelState = String(runtimeSummary?.functions?.[`server-tunnel-${serverId}`]?.state || '').toLowerCase();
+  const tunnelRunning = tunnelState === 'running';
+
   useEffect(() => {
-    void Promise.all([loadRuntime(), loadTunnelLogs(), loadActiveTerminal()]);
+    void Promise.all([loadRuntime(), loadTunnelLogs('full'), loadActiveTerminal()]);
   }, [loadRuntime, loadTunnelLogs, loadActiveTerminal]);
+
+  useEffect(() => {
+    if (!tunnelRunning || !deviceId || !serverId) {
+      return;
+    }
+    const id = window.setInterval(() => {
+      void loadTunnelLogs('refresh');
+    }, TUNNEL_LOG_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [tunnelRunning, deviceId, serverId, loadTunnelLogs]);
 
   useEffect(() => {
     if (!deviceId || !serverId) {
@@ -119,10 +153,15 @@ export function ServerRuntimePage() {
     const telemetrySub = subscribeTelemetryStream(deviceId, (entry: TelemetryEntry | undefined) => {
       const eventType = typeof entry?.type === 'string' ? entry.type.trim().toLowerCase() : '';
       const tunnelKey = `server-tunnel-${serverId}`;
-      const summary = runtimeSummaryRef.current;
-      const tunnelSessionId = String(summary?.functions?.[tunnelKey]?.sessionId ?? '').trim();
       const entrySessionId = typeof entry?.sessionId === 'string' ? entry.sessionId.trim() : '';
       const entryFunctionId = typeof entry?.functionId === 'string' ? entry.functionId.trim() : '';
+      // function-status carries the canonical sessionId for this tunnel — capture it
+      // synchronously so subsequent pty-output events (which have functionId=null) can
+      // match by sessionId without waiting for a runtime-summary fetch to round-trip.
+      if (eventType === 'function-status' && entryFunctionId === tunnelKey && entrySessionId) {
+        tunnelSessionIdRef.current = entrySessionId;
+      }
+      const tunnelSessionId = tunnelSessionIdRef.current;
       const tunnelPtyTelemetry =
         eventType === 'pty-output'
         || eventType === 'pty-exit'
@@ -132,7 +171,7 @@ export function ServerRuntimePage() {
         const matchesTunnelFunction = entryFunctionId === tunnelKey;
         const matchesTunnelSession = Boolean(tunnelSessionId) && entrySessionId === tunnelSessionId;
         if (matchesTunnelFunction || matchesTunnelSession) {
-          void loadTunnelLogs();
+          void loadTunnelLogs('refresh');
         }
       }
       if (eventType === 'function-status' || eventType === 'status_snapshot' || eventType === 'inventory') {
@@ -145,13 +184,6 @@ export function ServerRuntimePage() {
     };
   }, [deviceId, serverId, loadRuntime, loadTunnelLogs]);
 
-  const selectedServer = useMemo(() => (
-    runtimeSummary?.inventory?.servers?.find((server) => String(server.id || '').trim() === serverId) || null
-  ), [runtimeSummary, serverId]);
-  const serverName = String(selectedServer?.name || serverId || 'Server');
-  const tunnelState = String(runtimeSummary?.functions?.[`server-tunnel-${serverId}`]?.state || '').toLowerCase();
-  const tunnelRunning = tunnelState === 'running';
-
   async function handleStartTunnel() {
     if (!deviceId || !serverId) {
       return;
@@ -159,7 +191,7 @@ export function ServerRuntimePage() {
     setActionLoading(true);
     try {
       await requestStartServerTunnel(deviceId, serverId);
-      await Promise.all([loadRuntime(), loadTunnelLogs()]);
+      await Promise.all([loadRuntime(), loadTunnelLogs('full')]);
     } finally {
       setActionLoading(false);
     }
@@ -172,7 +204,7 @@ export function ServerRuntimePage() {
     setActionLoading(true);
     try {
       await requestStopServerTunnel(deviceId, serverId);
-      await Promise.all([loadRuntime(), loadTunnelLogs()]);
+      await Promise.all([loadRuntime(), loadTunnelLogs('full')]);
     } finally {
       setActionLoading(false);
     }

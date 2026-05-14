@@ -231,6 +231,9 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal', onTerminalC
 
     socket.addEventListener('open', () => {
       setState('attaching');
+      console.log(
+        `[PTY-TRACE] xterm: ws open — sending pty_attach deviceId=${terminal.deviceId} sessionId=${terminal.sessionId}`,
+      );
       socket.send(JSON.stringify({
         type: 'pty_attach',
         payload: {
@@ -258,16 +261,21 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal', onTerminalC
         try {
           message = JSON.parse(rawText);
         } catch {
+          console.warn('[PTY-TRACE] xterm: dropping non-JSON ws frame', rawText.slice(0, 80));
           return;
         }
         if (cleanedUp) {
           return;
         }
-        const { msgType, data, payload } = ptyFieldsFromSocketMessage(message);
+        const { msgType, sessionId: msgSessionId, data, payload } = ptyFieldsFromSocketMessage(message);
         const rootRec = message && typeof message === 'object' ? message as Record<string, unknown> : {};
+        console.log(
+          `[PTY-TRACE] xterm: received ws frame type=${msgType} sessionId=${msgSessionId} bytes=${typeof data === 'string' ? data.length : 0}`,
+        );
         // Do not filter by sessionId: this socket is already scoped by pty_attach; mismatched ids in
         // relayed frames (local vs remote) would otherwise drop all output and local echo is off.
         if (msgType === 'pty_output' && typeof data === 'string') {
+          console.log(`[PTY-TRACE] xterm: writing ${data.length} bytes to xterm`);
           xterm.write(data);
           setState('open');
         } else if (msgType === 'pty_attached') {
