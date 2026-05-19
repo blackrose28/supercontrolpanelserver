@@ -15,9 +15,6 @@ import {
 import { SshTerminalPanel } from '../components/SshTerminalPanel';
 import { formatTimestamp } from '../utils/formatTimestamp';
 
-/** Poll tunnel logs while the tunnel is running (telemetry match can miss when CC remote session id ≠ summary session id). */
-export const TUNNEL_LOG_POLL_INTERVAL_MS = 2000;
-
 type ActiveTerminal = { deviceId: string; serverId: string; sessionId: string };
 type TunnelLogsLoadMode = 'full' | 'refresh';
 
@@ -134,16 +131,6 @@ export function ServerRuntimePage() {
   useEffect(() => {
     void Promise.all([loadRuntime(), loadTunnelLogs('full'), loadActiveTerminal()]);
   }, [loadRuntime, loadTunnelLogs, loadActiveTerminal]);
-
-  useEffect(() => {
-    if (!tunnelRunning || !deviceId || !serverId) {
-      return;
-    }
-    const id = window.setInterval(() => {
-      void loadTunnelLogs('refresh');
-    }, TUNNEL_LOG_POLL_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, [tunnelRunning, deviceId, serverId, loadTunnelLogs]);
 
   useEffect(() => {
     if (!deviceId || !serverId) {
