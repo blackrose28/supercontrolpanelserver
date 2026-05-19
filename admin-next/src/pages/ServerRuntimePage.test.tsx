@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ServerRuntimePage, TUNNEL_LOG_POLL_INTERVAL_MS } from './ServerRuntimePage';
+import { ServerRuntimePage } from './ServerRuntimePage';
 
 vi.mock('../components/SshTerminalPanel', () => ({
   SshTerminalPanel: ({ terminal, title }: { terminal: { sessionId: string } | null; title?: string }) => (
@@ -22,6 +22,7 @@ function renderServerRuntimePage() {
 describe('ServerRuntimePage', () => {
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     document.head.innerHTML = '';
   });
@@ -260,7 +261,7 @@ describe('ServerRuntimePage', () => {
     });
   });
 
-  it('polls tunnel logs on an interval while the tunnel is running', async () => {
+  it('does not poll tunnel logs on an interval while the tunnel is running', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let logRequests = 0;
     const fetchMock = vi.fn((url: string) => {
@@ -301,10 +302,8 @@ describe('ServerRuntimePage', () => {
     expect(afterInitial).toBeGreaterThanOrEqual(1);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(TUNNEL_LOG_POLL_INTERVAL_MS + 100);
+      await vi.advanceTimersByTimeAsync(2500);
     });
-    expect(logRequests).toBeGreaterThanOrEqual(afterInitial + 1);
-
-    vi.useRealTimers();
+    expect(logRequests).toBe(afterInitial);
   });
 });
