@@ -1,8 +1,8 @@
 import { D1LikeDatabase } from './d1-device-store';
-import { redactTelemetryPayload } from '../../logs/log-redaction';
-import { mapFileTransferRow } from '../../file-ops/file-transfer.mappers';
-import { FileTransferDirection, FileTransferRecord, FileTransferState } from '../../file-ops/file-transfer.types';
-import { isFinishedTransferState, normalizeNullableNonNegativeNumber, normalizePositiveInteger, sanitizeText } from '../../file-ops/file-transfer.validators';
+import { redactTelemetryPayload } from '../../legacy/logs/log-redaction';
+import { mapFileTransferRow } from '../../legacy/file-ops/file-transfer.mappers';
+import { FileTransferDirection, FileTransferRecord, FileTransferState } from '../../legacy/file-ops/file-transfer.types';
+import { isFinishedTransferState, normalizeNullableNonNegativeNumber, normalizePositiveInteger, sanitizeText } from '../../legacy/file-ops/file-transfer.validators';
 
 const ACTIVE_STATES = ['queued', 'starting', 'running'];
 const FINISHED_STATES = ['succeeded', 'failed', 'canceled'];
@@ -16,7 +16,7 @@ function nullableString(value: unknown): string | null {
 }
 
 export class D1FileTransferStore {
-  constructor(private readonly db: D1LikeDatabase) {}
+  constructor(private readonly db: D1LikeDatabase) { }
 
   async create(input: {
     id: string; transferId: string; deviceId: string; serverId: string; direction: FileTransferDirection;
@@ -200,7 +200,7 @@ function mapBrowserRow(row: Record<string, unknown>): WorkerRemoteBrowserSession
 }
 
 export class D1RemoteBrowserSessionStore {
-  constructor(private readonly db: D1LikeDatabase) {}
+  constructor(private readonly db: D1LikeDatabase) { }
 
   async createOpening(input: { id: string; browserSessionId: string; deviceId: string; serverId: string; actorType?: string | null; actorId?: string | null; openedAt: string; rootPath?: string | null; }): Promise<WorkerRemoteBrowserSessionRecord> {
     await this.db.prepare(`
