@@ -1,6 +1,6 @@
 import { D1LikeDatabase } from './d1-device-store';
-import { coalesceFunctionStatusSessionId } from '../../logs/functionStatusSessionId';
-import { redactTelemetryPayload } from '../../logs/log-redaction';
+import { coalesceFunctionStatusSessionId } from '../../legacy/logs/functionStatusSessionId';
+import { redactTelemetryPayload } from '../../legacy/logs/log-redaction';
 
 export type WorkerTelemetryEvent = {
   id: string;

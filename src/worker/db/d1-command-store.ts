@@ -1,5 +1,5 @@
 import { D1LikeDatabase } from './d1-device-store';
-import { redactTelemetryPayload } from '../../logs/log-redaction';
+import { redactTelemetryPayload } from '../../legacy/logs/log-redaction';
 
 export type WorkerCommandState = 'queued' | 'dispatched' | 'executing' | 'succeeded' | 'failed' | 'canceled';
 export type WorkerCommandActorType = 'admin_session' | 'admin_api_token' | 'admin_env_token' | 'system';
@@ -111,7 +111,7 @@ function compareIso(left: string, right: string): number {
 }
 
 export class D1CommandStore {
-  constructor(private readonly db: D1LikeDatabase) {}
+  constructor(private readonly db: D1LikeDatabase) { }
 
   async createQueuedCommand(input: CreateWorkerCommandInput): Promise<WorkerCommandRecord> {
     await this.db.prepare(`

@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **cc-server** (1730 symbols, 6109 relationships, 147 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **cc-server** (2692 symbols, 8358 relationships, 225 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -32,109 +32,6 @@ This project is indexed by GitNexus as **cc-server** (1730 symbols, 6109 relatio
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
 - NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
 - NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
-
-## Test-Driven Development (TDD) - MANDATORY
-
-**All incremental changes MUST follow strict TDD practices. No exceptions.**
-
-### TDD Workflow (Red-Green-Refactor)
-
-1. **RED: Write the test first**
-   - Write a failing test that describes the desired behavior
-   - Run the test to confirm it fails for the right reason
-   - Do NOT write any implementation code yet
-
-2. **GREEN: Make it pass**
-   - Write the minimal code needed to make the test pass
-   - Run the test to confirm it passes
-   - Do not add extra features or "nice-to-haves"
-
-3. **REFACTOR: Clean up**
-   - Improve code quality without changing behavior
-   - Run tests to ensure they still pass
-   - Update documentation if needed
-
-### Mandatory Rules
-
-- **NEVER write implementation code before writing the test**
-- **NEVER skip writing tests** for any code change, no matter how small
-- **NEVER commit code** without corresponding tests
-- **ALWAYS run tests** before and after making changes
-- **ALWAYS ensure** all existing tests still pass
-
-### What Requires Tests
-
-- New functions, methods, or components
-- Bug fixes (write a test that reproduces the bug first)
-- API endpoints and handlers
-- State management logic
-- UI interactions and user flows
-- Edge cases and error handling
-- Integration points between modules
-
-### Test Coverage Requirements
-
-- **Unit tests**: All business logic, utilities, and pure functions
-- **Integration tests**: API endpoints, database operations, external service calls
-- **Component tests**: React/UI components with user interactions
-- **E2E tests**: Critical user flows (when applicable)
-
-### Testing Stack
-
-**Frontend (admin-next):**
-- Framework: Vitest + React Testing Library
-- Run: `npm test` or `npm test -- --run`
-- Location: `*.test.tsx` or `*.test.ts` files
-
-**Backend (NestJS):**
-- Framework: Jest
-- Run: `npm test` or `npm test -- --testPathPattern=<file>`
-- Location: `*.spec.ts` files
-
-**Rust (Tauri):**
-- Framework: Built-in Rust testing
-- Run: `cargo test`
-- Location: `#[cfg(test)]` modules or `tests/` directory
-
-### Example TDD Flow
-
-```
-# 1. RED - Write failing test
-$ vim src/api/adminApi.test.ts
-# Add test for requestRestartOpenvpn()
-$ npm test
-# ❌ Test fails - function doesn't exist
-
-# 2. GREEN - Implement minimal code
-$ vim src/api/adminApi.ts
-# Add requestRestartOpenvpn() function
-$ npm test
-# ✅ Test passes
-
-# 3. REFACTOR - Clean up if needed
-$ vim src/api/adminApi.ts
-# Extract common patterns, improve naming
-$ npm test
-# ✅ Tests still pass
-```
-
-### Enforcement
-
-- Code reviews will reject PRs without tests
-- CI/CD pipeline will fail if tests don't pass
-- Agents must verify test coverage before completing tasks
-- If you're tempted to skip tests, **STOP** and write them first
-
-### Benefits of Strict TDD
-
-- Catches bugs early in development
-- Provides living documentation
-- Enables confident refactoring
-- Reduces debugging time
-- Improves code design and modularity
-- Makes code review easier
-
-**Remember: Tests are not optional. They are part of the implementation.**
 
 ## Tools Quick Reference
 
