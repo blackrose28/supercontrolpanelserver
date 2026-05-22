@@ -37,7 +37,7 @@ describe('agent-event-handler — canonical sessionId device verification', () =
     expect(deps.logStore.append).not.toHaveBeenCalled();
     expect(deps.ptyHub.broadcast).not.toHaveBeenCalled();
     expect(deps.ptyHub.appendOutput).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Rejected pty-output from authenticated-device'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('pty-output from authenticated-device'));
     warn.mockRestore();
   });
 

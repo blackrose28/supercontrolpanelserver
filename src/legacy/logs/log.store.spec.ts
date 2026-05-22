@@ -20,7 +20,7 @@ function createStore(options?: { maxEventsPerDevice?: number }) {
   } else {
     delete process.env.CC_LOG_RETENTION_MAX_EVENTS_PER_DEVICE;
   }
-  delete process.env.CC_LOG_RETENTION_MAX_AGE_DAYS;
+  process.env.CC_LOG_RETENTION_MAX_AGE_DAYS = '365';
 
   const database = new DatabaseService();
   createdDatabases.push(database);
