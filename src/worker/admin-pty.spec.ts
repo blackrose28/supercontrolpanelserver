@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import worker, { AgentConnectionDurableObject } from './index';
+import worker, { AgentConnectionDurableObject, AdminPtyHubDurableObject } from './index';
 import { D1_SCHEMA_SQL } from './db/d1-schema';
 import { D1CommandStore } from './db/d1-command-store';
 import { D1DeviceStore } from './db/d1-device-store';
@@ -36,7 +36,65 @@ class FakeDurableObjectNamespace {
   }
 }
 
-type TestEnv = { CC_DB: TestD1Database; CC_ADMIN_API_TOKEN?: string; CC_AGENT_DO?: FakeDurableObjectNamespace; uuid?: () => string; now?: () => number };
+class FakeAdminPtyHubState {
+  readonly websockets: WebSocket[] = [];
+  constructor(private readonly hubGetter: () => AdminPtyHubDurableObject) {}
+  acceptWebSocket(socket: WebSocket, tags?: string[]) {
+    this.websockets.push(socket);
+    if (typeof (socket as any).accept === 'function') {
+      (socket as any).accept();
+    }
+    let attachment: any = null;
+    (socket as any).serializeAttachment = (att: any) => {
+      attachment = att;
+    };
+    (socket as any).deserializeAttachment = () => {
+      return attachment;
+    };
+    const hub = this.hubGetter();
+    socket.addEventListener('message', async (event: any) => {
+      const data = event?.data ?? event;
+      return hub.webSocketMessage(socket, data);
+    });
+    socket.addEventListener('close', async (event: any) => {
+      const code = event?.code ?? 1000;
+      const reason = event?.reason ?? '';
+      const wasClean = event?.wasClean ?? true;
+      return hub.webSocketClose(socket, code, reason, wasClean);
+    });
+  }
+  getWebSockets(tag?: string) {
+    return this.websockets;
+  }
+}
+
+class FakeAdminPtyHubNamespace {
+  private hubInstance: AdminPtyHubDurableObject | null = null;
+  readonly state: FakeAdminPtyHubState;
+  constructor(private readonly env: any) {
+    this.state = new FakeAdminPtyHubState(() => this.hubInstance!);
+  }
+  idFromName(name: string) { return { name }; }
+  get(id: { name: string }) {
+    if (!this.hubInstance) {
+      this.hubInstance = new AdminPtyHubDurableObject(this.state as any, this.env);
+    }
+    return {
+      fetch: async (request: Request) => {
+        return this.hubInstance!.fetch(request);
+      },
+    };
+  }
+}
+
+type TestEnv = {
+  CC_DB: TestD1Database;
+  CC_ADMIN_API_TOKEN?: string;
+  CC_AGENT_DO?: FakeDurableObjectNamespace;
+  CC_ADMIN_PTY_HUB?: FakeAdminPtyHubNamespace;
+  uuid?: () => string;
+  now?: () => number;
+};
 
 describe('Worker admin PTY WebSocket auth', () => {
   const databases: TestD1Database[] = [];
@@ -50,7 +108,14 @@ describe('Worker admin PTY WebSocket auth', () => {
     databases.push(db);
     await new D1DeviceStore(db).addDevice({ id: 'dev-1', name: 'One', lastSeenAt: '2026-04-29T00:00:00.000Z', status: 'connected', agentToken: 'agent-token-1' });
     let nextUuid = 0;
-    return { CC_DB: db, CC_ADMIN_API_TOKEN: 'admin-token', uuid: () => `uuid-${++nextUuid}`, now: () => Date.parse('2026-04-29T00:00:00.000Z') };
+    const env: any = {
+      CC_DB: db,
+      CC_ADMIN_API_TOKEN: 'admin-token',
+      uuid: () => `uuid-${++nextUuid}`,
+      now: () => Date.parse('2026-04-29T00:00:00.000Z'),
+    };
+    env.CC_ADMIN_PTY_HUB = new FakeAdminPtyHubNamespace(env);
+    return env;
   }
 
   function wsRequest(headers: Record<string, string> = {}) {

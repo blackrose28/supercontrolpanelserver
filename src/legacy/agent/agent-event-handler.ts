@@ -645,7 +645,7 @@ export function handleAgentFunctionStatus(input: {
     payload,
   );
   const verified = verifyCanonicalSessionIdForDevice(client.deviceId, coalescedSessionId);
-  if (!verified.ok) {
+  if (verified.ok === false) {
     console.warn(
       `Rejected function-status from ${client.deviceId}: ${verified.reason}`,
     );
@@ -697,7 +697,7 @@ export function handleAgentPtyOutput(input: {
   );
 
   const verified = verifyCanonicalSessionIdForDevice(client.deviceId, rawSessionId);
-  if (!verified.ok) {
+  if (verified.ok === false) {
     console.warn(
       `[PTY-TRACE] cc-server: REJECTED pty-output from ${client.deviceId}: ${verified.reason} (rawSessionId=${rawSessionId})`,
     );
@@ -762,7 +762,7 @@ export function handleAgentPtyExit(input: {
             : null;
 
   const verified = verifyCanonicalSessionIdForDevice(client.deviceId, rawSessionId);
-  if (!verified.ok) {
+  if (verified.ok === false) {
     console.warn(
       `Rejected pty-exit from ${client.deviceId}: ${verified.reason}`,
     );
