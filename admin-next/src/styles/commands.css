@@ -1,0 +1,165 @@
+.commands-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.commands-section-subtitle {
+  margin: 4px 0 0;
+  max-width: 46rem;
+  color: #6b7280;
+}
+
+.commands-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.commands-toolbar-caption,
+.commands-list-heading {
+  color: #6b7280;
+  font-size: 12px;
+  margin: 0;
+}
+
+.commands-toolbar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.commands-toolbar-select,
+.commands-toolbar-button {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.commands-toolbar-select {
+  padding: 8px 12px;
+}
+
+.commands-toolbar-button {
+  padding: 9px 14px;
+  font-weight: 600;
+}
+
+.commands-toolbar-button:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.commands-section ul {
+  list-style: none;
+  margin: 10px 0 4px;
+  padding: 0;
+}
+
+.commands-section li {
+  margin: 0 0 10px;
+}
+
+.command-card-row {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f9fafb;
+  padding: 10px;
+}
+
+.command-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.command-card-meta-line {
+  color: #6b7280;
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.command-audit-list {
+  margin-top: 8px;
+}
+
+.command-audit-entry {
+  border-left: 3px solid #cbd5e1;
+  background: #fff;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.command-card-button {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f9fafb;
+  padding: 8px 10px;
+}
+
+.command-card-button[aria-pressed='true'] {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgb(37, 99, 235, 0.12);
+  background: #eff6ff;
+}
+
+.command-state-badge,
+.transfer-state-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #e5e7eb;
+  color: #1f2937;
+}
+
+.state-queued,
+.state-dispatched {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.state-executing {
+  color: #b45309;
+  background: #fef3c7;
+}
+
+.state-succeeded {
+  color: #047857;
+  background: #dcfce7;
+}
+
+.state-failed,
+.state-canceled {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.panel-refresh-button {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #111827;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.panel-refresh-button:hover:not(:disabled) {
+  background: #f9fafb;
+}
+
+.panel-refresh-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}

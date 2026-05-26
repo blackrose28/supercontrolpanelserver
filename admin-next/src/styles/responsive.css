@@ -1,0 +1,431 @@
+/* Mobile viewport optimizations for iPhone 14 Pro Max (430x932) and other devices */
+
+/* Prevent horizontal overflow at root level */
+html {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+#root {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+@media (width <= 768px) {
+  main {
+    padding: 12px;
+    max-width: 100vw;
+    overflow-x: hidden;
+    box-sizing: border-box;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+    margin-bottom: 12px;
+  }
+
+  h2 {
+    font-size: 0.95rem;
+  }
+
+  h3 {
+    font-size: 0.9rem;
+  }
+
+  .device-list-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .device-refresh-button {
+    width: 100%;
+  }
+
+  .runtime-summary-header,
+  .runtime-summary-live-workspace,
+  .runtime-summary-log-toolbar,
+  .runtime-summary-function-item,
+  .runtime-summary-tunnel-meta,
+  .runtime-summary-tunnel-actions,
+  .device-workspace-header,
+  .logs-section-header,
+  .logs-list-item-row,
+  .commands-section-header,
+  .commands-toolbar,
+  .transfers-section-header,
+  .transfers-toolbar,
+  .telemetry-section-header,
+  .telemetry-toolbar,
+  .telemetry-row-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .runtime-summary-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-summary-live-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-toolbar-button,
+  .runtime-summary-updated-card,
+  .logs-toolbar,
+  .toolbar-limit-field,
+  .logs-toolbar-select,
+  .logs-retry-button,
+  .commands-toolbar-select,
+  .commands-toolbar-button,
+  .transfers-toolbar-select,
+  .transfers-toolbar-button,
+  .telemetry-toolbar-select,
+  .telemetry-toolbar-button {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .telemetry-tools-grid,
+  .telemetry-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .toolbar-limit-field,
+  .telemetry-filter-field,
+  .telemetry-export-actions {
+    display: grid;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .device-details-grid,
+  .device-details-list {
+    grid-template-columns: 1fr;
+  }
+
+  /* Panel sections */
+  .panel-section,
+  section {
+    padding: 12px;
+    margin-bottom: 12px;
+    box-sizing: border-box;
+  }
+
+  /* Command cards */
+  .command-card-row {
+    padding: 8px;
+  }
+
+  .command-card-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .command-card-meta-line {
+    font-size: 11px;
+  }
+
+  .command-card-button {
+    width: 100%;
+    text-align: left;
+  }
+
+  /* Transfer cards */
+  .transfer-card {
+    padding: 10px;
+  }
+
+  .transfer-card-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .transfer-card-meta {
+    font-size: 11px;
+  }
+
+  .transfer-actions-row {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .transfer-action-button {
+    width: 100%;
+  }
+
+  /* Buttons */
+  .panel-refresh-button,
+  section > button[type="button"] {
+    width: 100%;
+    padding: 10px;
+    font-size: 13px;
+    box-sizing: border-box;
+  }
+
+  button {
+    min-height: 44px;
+  }
+
+  /* Telemetry */
+  .telemetry-filter-input {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 0 10px;
+  }
+
+  .telemetry-row {
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .telemetry-export-link {
+    display: block;
+    margin: 8px 0 0;
+  }
+
+  /* Device expanded panel */
+  .device-expanded-panel {
+    padding: 12px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Code blocks */
+  code {
+    font-size: 11px;
+    overflow-wrap: break-word;
+  }
+
+  /* Lists */
+  .commands-section ul,
+  .transfers-section ul,
+  .telemetry-section ul {
+    padding: 0;
+  }
+
+  /* Device tabs */
+  .device-tabs-bar {
+    gap: 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap;
+    scroll-snap-type: x proximity;
+    margin-inline: -2px;
+    padding-inline: 2px;
+  }
+
+  .device-tab-button {
+    padding: 6px 10px;
+    font-size: 11px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+  }
+
+  .device-tab-panels-stack {
+    gap: 10px;
+  }
+
+  .device-tab-panel.active {
+    overflow: hidden;
+    border-radius: 14px;
+  }
+}
+
+@media (width <= 480px) {
+  main {
+    padding: 8px;
+  }
+
+  h1 {
+    font-size: 1.3rem;
+  }
+
+  section,
+  .panel-section {
+    padding: 10px;
+  }
+
+  td {
+    padding: 5px 6px;
+    font-size: 10px;
+  }
+
+  .device-actions-cell {
+    min-width: 130px;
+  }
+
+  .device-actions-cell button {
+    font-size: 10px;
+    padding: 5px 6px;
+  }
+
+  .device-tab-button {
+    padding: 5px 8px;
+    font-size: 10px;
+  }
+
+  .device-workspace-header {
+    padding: 12px;
+  }
+
+  .command-card-row,
+  .transfer-card {
+    padding: 8px;
+  }
+}
+
+/* Touch-friendly improvements */
+@media (hover: none) and (pointer: coarse) {
+  button {
+    min-height: 44px;
+    padding: 10px 12px;
+  }
+
+  .device-tab-button {
+    min-height: 40px;
+  }
+
+  input,
+  select {
+    min-height: 44px;
+  }
+
+  .telemetry-filter-input {
+    min-height: 44px;
+  }
+}
+
+/* Landscape mobile optimization */
+@media (width <= 768px) and (orientation: landscape) {
+  main {
+    padding: 10px;
+  }
+
+  section,
+  .panel-section {
+    margin-bottom: 10px;
+  }
+}
+
+/* Mobile Card Layout for Device Table */
+@media (width <= 767px) {
+  /* Hide table structure on mobile */
+  section table,
+  section thead,
+  section tbody,
+  section th,
+  section td,
+  section tr {
+    display: block;
+  }
+
+  section thead tr {
+    position: absolute;
+    top: -9999px;
+    left: -9999px;
+  }
+
+  section tbody tr {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    padding: 12px;
+    background: #fff;
+    box-shadow: 0 1px 3px rgb(0, 0, 0, 0.1);
+  }
+
+  section tbody tr.device-expanded-row {
+    margin-top: -12px;
+    margin-bottom: 12px;
+    border-top: none;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    padding-top: 0;
+  }
+
+  section td {
+    border: none;
+    padding: 6px 0;
+    text-align: left;
+    position: relative;
+  }
+
+  /* Add labels before each data cell */
+  section td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: #6b7280;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    display: block;
+    margin-bottom: 3px;
+  }
+
+  /* Device name - make it prominent */
+  section td:first-child {
+    font-size: 16px;
+    font-weight: 600;
+    color: #111827;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  section td:first-child::before {
+    display: none;
+  }
+
+  /* Actions cell - full width buttons */
+  section td:last-child {
+    padding-top: 12px;
+    margin-top: 8px;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  section td:last-child::before {
+    display: none;
+  }
+
+  .device-actions-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .device-actions-cell button {
+    width: 100%;
+    padding: 10px;
+    font-size: 14px;
+    text-align: center;
+  }
+
+  .device-actions-menu {
+    position: static;
+    width: 100%;
+    margin-top: 8px;
+    box-shadow: none;
+    border: 1px solid #d1d5db;
+    background: #f9fafb;
+  }
+
+  /* Expanded device panel */
+  section tr.device-expanded-row td {
+    padding: 12px 0 0;
+  }
+
+  section tr.device-expanded-row td::before {
+    display: none;
+  }
+}

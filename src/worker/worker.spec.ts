@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import worker from './index';
+import worker, * as workerExports from './index';
 
 describe('Cloudflare Worker health route', () => {
   afterEach(() => {
@@ -34,5 +34,12 @@ describe('Cloudflare Worker health route', () => {
       path: '/v1/health',
       status: 200,
     }));
+  });
+
+  it('does not export cookie constants from the entry point to avoid wrangler mapping conflicts', () => {
+    // @ts-expect-error - testing that these are not part of the exports
+    expect(workerExports.ADMIN_CSRF_COOKIE).toBeUndefined();
+    // @ts-expect-error - testing that these are not part of the exports
+    expect(workerExports.ADMIN_SESSION_COOKIE).toBeUndefined();
   });
 });
