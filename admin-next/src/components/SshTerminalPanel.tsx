@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { PtyInputBuffer } from '../utils/input-buffer';
 import '@xterm/xterm/css/xterm.css';
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 32;
+const DEBOUNCE_MS = 1000;
 
 type SshTerminalPanelProps = {
   terminal: { deviceId: string; serverId: string; sessionId: string } | null;
@@ -141,11 +143,14 @@ async function webSocketMessageToUtf8(raw: unknown): Promise<string> {
 
 export function SshTerminalPanel({ terminal, title = 'SSH Terminal', onTerminalClosed }: SshTerminalPanelProps) {
   const [state, setState] = useState('idle');
+  const [inputText, setInputText] = useState('');
   const containerRef = useRef<HTMLDivElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const onTerminalClosedRef = useRef(onTerminalClosed);
+  const inputBufRef = useRef<PtyInputBuffer | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     onTerminalClosedRef.current = onTerminalClosed;
@@ -218,14 +223,51 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal', onTerminalC
     fitAddonRef.current = fitAddon;
 
     let inputEnabled = true;
+    const inputBuf = new PtyInputBuffer();
+    inputBufRef.current = inputBuf;
 
     const socket = new WebSocket(getPtyWebSocketUrl());
     socketRef.current = socket;
     setState('connecting');
 
-    const dataDisposable = xterm.onData((data) => {
-      if (inputEnabled && socket.readyState === WebSocket.OPEN) {
+    /** Send data to the server as a pty_write. */
+    const sendToServer = (data: string) => {
+      if (data && socket.readyState === WebSocket.OPEN) {
         sendPtyInput(socket, terminal, data);
+      }
+    };
+
+    /** Reset the debounce timer. */
+    const resetDebounce = () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        const drained = inputBuf.drain();
+        if (drained) {
+          sendToServer(drained);
+          setInputText('');
+        }
+      }, DEBOUNCE_MS);
+    };
+
+    const dataDisposable = xterm.onData((data) => {
+      if (!inputEnabled || socket.readyState !== WebSocket.OPEN) return;
+
+      const result = inputBuf.push(data);
+      setInputText(result.display);
+
+      // Flush: send accumulated buffer as batch pty_write
+      if (result.flush) {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        sendToServer(result.flush);
+      }
+      // Immediate: send special key right after flush
+      if (result.immediate) {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        sendToServer(result.immediate);
+      }
+      // If there's still buffered content (no flush/immediate), start debounce
+      if (!result.flush && !result.immediate && inputBuf.displayText) {
+        resetDebounce();
       }
     });
 
@@ -284,6 +326,8 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal', onTerminalC
           setState(String((payload.state as string) || 'open'));
         } else if (msgType === 'pty_exit') {
           inputEnabled = false;
+          inputBuf.clear();
+          setInputText('');
           setState('closed');
           onTerminalClosedRef.current?.({ deviceId: terminal.deviceId, serverId: terminal.serverId, sessionId: terminal.sessionId });
           xterm.writeln('\r\nSSH terminal closed.');
@@ -293,6 +337,8 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal', onTerminalC
             : (typeof rootRec.code === 'string' ? rootRec.code : '');
           if (code === 'PTY_NOT_FOUND' || code === 'PTY_SESSION_NOT_FOUND' || code === 'PTY_SESSION_NOT_ACTIVE') {
             inputEnabled = false;
+            inputBuf.clear();
+            setInputText('');
             setState('closed');
             onTerminalClosedRef.current?.({ deviceId: terminal.deviceId, serverId: terminal.serverId, sessionId: terminal.sessionId, reasonCode: code });
             if (socket.readyState === WebSocket.OPEN) {
@@ -318,6 +364,14 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal', onTerminalC
 
     return () => {
       cleanedUp = true;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      // Flush any remaining buffered input before disconnecting
+      const remaining = inputBuf.drain();
+      if (remaining && socket.readyState === WebSocket.OPEN) {
+        sendPtyInput(socket, terminal, remaining);
+      }
+      inputBuf.clear();
+      inputBufRef.current = null;
       resizeObserver?.disconnect();
       dataDisposable.dispose();
       if (socket.readyState === WebSocket.OPEN) {
@@ -343,6 +397,7 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal', onTerminalC
       if (fitAddonRef.current === fitAddon) {
         fitAddonRef.current = null;
       }
+      setInputText('');
     };
   }, [terminal?.deviceId, terminal?.serverId, terminal?.sessionId]);
 
@@ -359,7 +414,14 @@ export function SshTerminalPanel({ terminal, title = 'SSH Terminal', onTerminalC
         </div>
         <span className="command-state-badge">{state}</span>
       </div>
-      <div ref={containerRef} className="ssh-xterm-container" data-testid={`ssh-xterm-${terminal.serverId}`} />
+      <div className="ssh-xterm-wrapper">
+        <div ref={containerRef} className="ssh-xterm-container" data-testid={`ssh-xterm-${terminal.serverId}`} />
+        <div className="ssh-input-line" data-testid={`ssh-input-line-${terminal.serverId}`}>
+          <span className="ssh-input-line-prefix">⌨</span>
+          <span className="ssh-input-line-text">{inputText}</span>
+          <span className="ssh-input-line-cursor" />
+        </div>
+      </div>
     </section>
   );
 }

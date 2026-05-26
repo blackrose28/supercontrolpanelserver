@@ -7,7 +7,7 @@ export {
   applySecurityHeaders, jsonResponse, redirectResponse,
   parseCookies, appendCookie, parseRequestFields, parseJsonBody,
   getClientId, clampNumber, sseFrame, sseStreamResponse, streamPollMs,
-  decompressGzipBody, ADMIN_SESSION_COOKIE, ADMIN_CSRF_COOKIE,
+  decompressGzipBody,
 } from './http';
 export {
   getBearerToken, hasValidStaticAdminBearer, csrfTokenFromBody,

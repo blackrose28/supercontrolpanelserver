@@ -41,6 +41,7 @@ class FakeAdminPtyHubState {
   constructor(private readonly hubGetter: () => AdminPtyHubDurableObject) {}
   acceptWebSocket(socket: WebSocket, tags?: string[]) {
     this.websockets.push(socket);
+    (socket as any).__tags = tags ?? [];
     if (typeof (socket as any).accept === 'function') {
       (socket as any).accept();
     }
@@ -64,7 +65,10 @@ class FakeAdminPtyHubState {
     });
   }
   getWebSockets(tag?: string) {
-    return this.websockets;
+    if (!tag) return this.websockets;
+    return this.websockets.filter((ws) => {
+      return (ws as any).__tags?.includes(tag) ?? false;
+    });
   }
 }
 

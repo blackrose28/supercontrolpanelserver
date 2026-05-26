@@ -1,0 +1,240 @@
+.runtime-summary-section {
+  display: grid;
+  gap: 14px;
+}
+
+.runtime-summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.runtime-summary-subtitle {
+  margin: 4px 0 0;
+  max-width: 48rem;
+  color: #6b7280;
+}
+
+.runtime-summary-updated-card,
+.runtime-summary-stat-card,
+.runtime-summary-message-card,
+.runtime-summary-tunnel-card,
+.runtime-summary-log-panel {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.runtime-summary-updated-card {
+  min-width: 180px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 4px;
+}
+
+.runtime-summary-updated-label,
+.runtime-summary-stat-label,
+.runtime-summary-log-toolbar-meta,
+.runtime-summary-function-message,
+.runtime-summary-tunnel-host {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.runtime-summary-updated-copy {
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+}
+
+.runtime-summary-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.runtime-summary-stat-card {
+  padding: 14px;
+  display: grid;
+  gap: 6px;
+}
+
+.runtime-summary-stat-value {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.runtime-summary-message-card {
+  padding: 14px;
+}
+
+.runtime-summary-live-workspace {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(320px, 1fr) minmax(480px, 1.35fr);
+  align-items: start;
+}
+
+.runtime-summary-live-pane {
+  min-width: 0;
+}
+
+.runtime-summary-live-pane-logs {
+  max-height: 40rem;
+  overflow: auto;
+}
+
+.runtime-summary-live-log-list {
+  max-height: 34rem;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.runtime-summary-live-pane-terminal .ssh-terminal-section {
+  margin-top: 0;
+}
+
+.runtime-summary-message-card-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.runtime-summary-function-list,
+.runtime-summary-tunnel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.runtime-summary-function-item,
+.runtime-summary-tunnel-card {
+  padding: 14px;
+}
+
+.runtime-summary-function-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.runtime-summary-function-message,
+.runtime-summary-tunnel-host,
+.runtime-summary-log-toolbar-meta {
+  margin: 4px 0 0;
+}
+
+.runtime-summary-tunnel-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.runtime-summary-tunnel-actions,
+.runtime-summary-log-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.runtime-toolbar-button {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #0f172a;
+  padding: 9px 14px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.runtime-toolbar-button:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.runtime-toolbar-button-primary {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.runtime-toolbar-button-primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.runtime-summary-log-panel {
+  padding: 14px;
+}
+
+.runtime-summary-log-output {
+  margin: 0;
+  padding: 14px;
+  border-radius: 10px;
+  background: #0f172a;
+  color: #e2e8f0;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.runtime-summary-server-drawer {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.runtime-summary-server-drawer .ssh-terminal-section {
+  margin-top: 0;
+}
+
+.runtime-summary-detail-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
+  background: #eef4ff;
+}
+
+.runtime-summary-detail-tab {
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: transparent;
+  color: #475569;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.runtime-summary-detail-tab[aria-selected="true"] {
+  background: #0f172a;
+  color: #f8fafc;
+  box-shadow: 0 6px 16px rgb(15, 23, 42, 0.18);
+}
+
+.runtime-summary-detail-pane.is-hidden {
+  display: none;
+}
+
+.runtime-summary-log-panel-inline {
+  margin: 0;
+}
+
+.runtime-summary-log-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}

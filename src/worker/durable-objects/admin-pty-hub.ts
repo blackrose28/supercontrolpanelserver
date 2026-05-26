@@ -60,7 +60,7 @@ export class AdminPtyHubDurableObject {
     if (!sessionId) {
       return jsonResponse({ ok: false, error: 'SESSION_ID_REQUIRED' }, { status: 400 });
     }
-    const tagged = (this.state.getWebSockets?.(sessionId) ?? []).filter((ws) => {
+    const tagged = (this.state.getWebSockets?.() ?? []).filter((ws) => {
       const att = (ws as any).deserializeAttachment?.();
       return att?.sessionId === sessionId;
     });
