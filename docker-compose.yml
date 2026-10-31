@@ -1,0 +1,21 @@
+# cc-server — normal cloud-server deployment
+# 1. cp .env.example .env   (then set CC_ADMIN_PASSWORD, CC_BOOTSTRAP_TOKEN, CC_CORS_ORIGIN)
+# 2. docker compose up -d --build
+services:
+  cc-server:
+    build: .
+    image: cc-server:latest
+    container_name: cc-server
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      PORT: 3000
+      CC_DB_PATH: /data/cc-server.sqlite
+    volumes:
+      - cc-data:/data
+    restart: unless-stopped
+
+volumes:
+  cc-data:

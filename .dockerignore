@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+admin-next/node_modules
+admin-next/dist
+data
+*.sqlite
+*.sqlite-*
+backups
+.env
+.dev.vars
+.wrangler
+*.log
+.DS_Store

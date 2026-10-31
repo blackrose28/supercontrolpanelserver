@@ -110,58 +110,50 @@ Or pass secrets inline (useful for CI / containers):
 CC_ADMIN_PASSWORD='…' CC_BOOTSTRAP_TOKEN='…' npm start
 ```
 
-## Deploy to Cloudflare Workers (D1 mode)
+## Deploy (normal cloud server)
 
-For Cloudflare Workers deployment with D1 database:
+The server is a long-running Node.js process (NestJS) with a local SQLite database. The recommended way to run it on a cloud VM is Docker.
+
+### Quick start with Docker Compose
+
+1. Copy the environment template and fill in the required values:
+
+   ```bash
+   cp .env.example .env
+   # set CC_ADMIN_PASSWORD, CC_BOOTSTRAP_TOKEN, CC_CORS_ORIGIN
+   ```
+
+2. Build and start:
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+3. The server listens on port 3000 (host port overridable with `HOST_PORT` in `.env`) and serves the admin UI at `/admin`.
+
+Data (SQLite) persists in the `cc-data` Docker volume (`CC_DB_PATH=/data/cc-server.sqlite` inside the container).
+
+### Plain Docker
 
 ```bash
-# Install dependencies and validate both runtime paths first
-npm install
-npm test
+docker build -t cc-server .
+docker run -d --name cc-server -p 3000:3000 \
+  -e CC_ADMIN_PASSWORD=... -e CC_BOOTSTRAP_TOKEN=... -e CC_CORS_ORIGIN=... \
+  -v cc-data:/data cc-server
+```
+
+### Without Docker
+
+```bash
+npm ci
+npm run admin-next:build
 npm run build
-npm --prefix admin-next run build
-
-# Local API preview
-npx wrangler dev
-
-# Deploy to production
-npx wrangler deploy
+CC_DB_PATH=./data/cc-server.sqlite node dist/main.js
 ```
 
-**Note for agents:** In Cloudflare Workers D1 mode, agents now prefer WebSockets backed by a per-device Durable Object using WebSocket hibernation:
-1. **GET /agent with WebSocket upgrade**: primary bidirectional agent transport; command dispatch wakes the device Durable Object and sends immediately to connected hibernated sockets.
-2. **POST /agent**: compatibility heartbeat/telemetry polling fallback for older agents.
-3. **GET /agent**: compatibility JSON command polling fallback when no WebSocket upgrade is requested.
+### Note on the retired Cloudflare Workers experiment
 
-The Worker requires the `CC_AGENT_DO` Durable Object binding from `wrangler.toml`; keep the D1 `CC_DB` binding configured as before.
-
-### Cloudflare required bindings and secrets
-
-Configure these before production deployment:
-
-- D1 binding: `CC_DB`
-- Durable Object binding: `CC_AGENT_DO`
-- Secrets: `CC_ADMIN_PASSWORD`, `CC_BOOTSTRAP_TOKEN`
-- Optional compatibility secret: `CC_ADMIN_API_TOKEN`
-- TOTP encryption secret when using admin TOTP: `CC_TOTP_ENCRYPTION_KEY`
-
-Apply the D1 schema/migration before routing production traffic to Workers. See `../docs/cc/cloudflare-d1-migration-runbook.md` for SQLite-to-D1 export/import and rollback.
-
-### Cloudflare Pages admin deployment
-
-`admin-next` remains a normal Vite app for local/server deployments and can also be deployed as Cloudflare Pages:
-
-```bash
-npm --prefix admin-next run build
-npx wrangler pages dev public/admin-next --compatibility-date=2026-04-29
-```
-
-For production, connect the Pages project to `cc-server/admin-next` (or upload `cc-server/public/admin-next`) and configure it to call the Worker API origin. The existing NestJS backend and Vite workflow remain supported; this Cloudflare path is additive, not a replacement.
-
-### Rollback
-
-If the Worker/D1 deployment has issues, route traffic back to the normal NestJS server and restore the SQLite backup captured before migration. Do not run active-active writes to both SQLite and D1 unless a future sync design is added.
-
+The Workers/D1 prototype (Apr–May 2026) was reverted: Workers isn't a good fit for this server (long-lived WebSockets, PTY sessions, local SQLite). If a `cc-server` D1 database still exists in your Cloudflare account, export anything you need and delete it from the Cloudflare dashboard. Desktop clients auto-detect the transport and fall back to WebSocket against this server — no client changes needed.
 ## Development
 
 ```bash
